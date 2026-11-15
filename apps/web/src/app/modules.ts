@@ -1,24 +1,28 @@
-import { Boxes, Factory, FolderKanban, Handshake, Landmark, Settings, Users, type LucideIcon } from 'lucide-react'
+import type { ModuleSlug } from '@erp/shared'
+import { Boxes, Factory, FolderKanban, Handshake, Landmark, Users, type LucideIcon } from 'lucide-react'
 
 /**
- * The ERP's modules, in the order the sidebar shows them. Each one is a placeholder page until its
- * phase of docs/roadmap.md is built; `planned` lists what that phase delivers.
+ * The ERP's modules, in the order the sidebar shows them. A module that isn't built yet shows a
+ * placeholder page listing what its phase of docs/roadmap.md delivers.
  */
 export type Module = {
-  path: `/${string}`
+  slug: ModuleSlug
   label: string
   icon: LucideIcon
   phase: number
+  /** Built and usable. */
+  ready: boolean
   summary: string
-  planned: string[]
+  planned: readonly string[]
 }
 
 export const MODULES = [
   {
-    path: '/finance',
+    slug: 'finance',
     label: 'Finance',
     icon: Landmark,
     phase: 2,
+    ready: true,
     summary: 'General ledger, invoices, bills and BIR tax reporting.',
     planned: [
       'Chart of accounts, journals and general ledger',
@@ -29,10 +33,11 @@ export const MODULES = [
     ],
   },
   {
-    path: '/inventory',
+    slug: 'inventory',
     label: 'Inventory',
     icon: Boxes,
     phase: 3,
+    ready: false,
     summary: 'Stock levels, warehouses, purchasing and suppliers.',
     planned: [
       'Items, units of measure, warehouses and bins',
@@ -43,18 +48,20 @@ export const MODULES = [
     ],
   },
   {
-    path: '/crm',
+    slug: 'crm',
     label: 'Sales & CRM',
     icon: Handshake,
     phase: 4,
+    ready: false,
     summary: 'Customers, leads, pipeline and sales orders.',
     planned: ['Customers and contacts', 'Leads and a sales pipeline', 'Quote → sales order → delivery → invoice', 'Service tickets'],
   },
   {
-    path: '/hr',
+    slug: 'hr',
     label: 'HR & Payroll',
     icon: Users,
     phase: 5,
+    ready: false,
     summary: 'Employees, attendance, leave and Philippine payroll.',
     planned: [
       'Employee records with encrypted government ID numbers',
@@ -65,27 +72,23 @@ export const MODULES = [
     ],
   },
   {
-    path: '/manufacturing',
+    slug: 'manufacturing',
     label: 'Manufacturing',
     icon: Factory,
     phase: 6,
+    ready: false,
     summary: 'Bills of materials, work orders and quality control.',
     planned: ['Multi-level bills of materials', 'Routings and work centres', 'Work orders and production scheduling', 'Quality control checks', 'Material requirements planning'],
   },
   {
-    path: '/projects',
+    slug: 'projects',
     label: 'Projects',
     icon: FolderKanban,
     phase: 7,
+    ready: false,
     summary: 'Milestones, timesheets and job costing.',
     planned: ['Projects, milestones and tasks', 'Resource allocation and timesheets', 'Job costing', 'Gantt chart', 'Field work orders from the phone app'],
   },
-  {
-    path: '/settings',
-    label: 'Settings',
-    icon: Settings,
-    phase: 1,
-    summary: 'Your workspace, members, roles and join codes.',
-    planned: ['Workspace details: business name, TIN, VAT registration', 'Members, roles and permissions', 'One-time join codes for new members', 'Audit log of every change'],
-  },
 ] as const satisfies readonly Module[]
+
+export const moduleBySlug = (slug: string): Module | undefined => MODULES.find((m) => m.slug === slug)

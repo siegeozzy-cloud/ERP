@@ -52,7 +52,10 @@ export class ApiError extends Error {
   }
 }
 
-const UNREACHABLE = 'Can’t reach the server. Check your connection, or try again in a minute (the free server takes a moment to wake up).'
+/** In development the usual cause is that the API simply isn't running, so say how to start it. */
+const UNREACHABLE = import.meta.env.DEV
+  ? 'Can’t reach the API. Is it running? Start everything with “npm run dev” in the project folder, or “npm run dev:api” alongside the web app.'
+  : 'Can’t reach the server. Check your connection, or try again in a minute (the free server takes a moment to wake up).'
 
 type Options = { method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'; body?: unknown }
 

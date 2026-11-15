@@ -7,9 +7,17 @@ import Fastify from 'fastify'
 import { config } from './config.ts'
 import { pool } from './db/client.ts'
 import authRoutes from './features/auth/routes.ts'
+import { billRoutes, invoiceRoutes, paymentRoutes } from './features/finance/document-routes.ts'
+import journalRoutes from './features/finance/journal-routes.ts'
+import reportRoutes from './features/finance/report-routes.ts'
+import memberRoutes from './features/members/routes.ts'
+import psgcRoutes from './features/psgc/psgc.ts'
+import setupRoutes from './features/finance/setup-routes.ts'
+import workspaceRoutes, { workspaceDetailRoutes } from './features/workspaces/routes.ts'
 import { errorHandler, HttpError } from './lib/errors.ts'
 import { registerSecurityHeaders } from './lib/security.ts'
 import { registerSessions } from './lib/session.ts'
+import { workspaceScope } from './lib/workspace.ts'
 
 export async function buildApp() {
   const app = Fastify({
@@ -70,6 +78,20 @@ export async function buildApp() {
   })
 
   await app.register(authRoutes, { prefix: '/api/auth' })
+  await app.register(workspaceRoutes, { prefix: '/api/workspaces' })
+  await app.register(psgcRoutes, { prefix: '/api/psgc' })
+
+  // everything below lives inside one workspace: /api/w/:workspaceId/…
+  await workspaceScope(app, async (scoped) => {
+    await workspaceDetailRoutes(scoped)
+    await memberRoutes(scoped)
+    await setupRoutes(scoped)
+    await invoiceRoutes(scoped)
+    await billRoutes(scoped)
+    await paymentRoutes(scoped)
+    await journalRoutes(scoped)
+    await reportRoutes(scoped)
+  })
 
   return app
 }

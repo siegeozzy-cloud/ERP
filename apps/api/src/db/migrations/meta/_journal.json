@@ -8,6 +8,41 @@
       "when": 1794736860904,
       "tag": "0000_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794737735044,
+      "tag": "0001_workspaces_finance",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794737735536,
+      "tag": "0002_posted_records_are_final",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794740171122,
+      "tag": "0003_roles_codes_audit_psgc",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794740177906,
+      "tag": "0004_backfill_roles_audit_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794741919864,
+      "tag": "0005_memberships_role_id",
+      "breakpoints": true
     }
   ]
 }

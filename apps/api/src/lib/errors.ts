@@ -31,8 +31,16 @@ export function parse<S extends z.ZodType>(schema: S, data: unknown): z.output<S
 
 const send = (reply: FastifyReply, status: number, error: ApiErrorBody['error']) => reply.code(status).send({ error } satisfies ApiErrorBody)
 
+/** A refusal from one of the database's own rules (migration 0002: posted records are final). */
+function databaseRefusal(err: unknown) {
+  const cause = ((err as { cause?: unknown })?.cause ?? err) as { code?: string; message?: string }
+  return cause?.code === 'P0001' ? cause.message : undefined
+}
+
 export function errorHandler(err: FastifyError | HttpError, req: FastifyRequest, reply: FastifyReply) {
   if (err instanceof HttpError) return send(reply, err.status, { code: err.code, message: err.message, field: err.field })
+  const refused = databaseRefusal(err)
+  if (refused) return send(reply, 409, { code: 'locked', message: refused })
   if (err.statusCode === 429) return send(reply, 429, { code: 'rate-limited', message: 'Too many attempts. Wait a minute and try again.' })
   if (err.statusCode && err.statusCode < 500) return send(reply, err.statusCode, { code: 'bad-request', message: 'That request wasn’t understood.' })
   req.log.error(err)

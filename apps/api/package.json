@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env src/db/migrate.ts",
-    "test": "NODE_ENV=test node --env-file-if-exists=.env --test test/*.test.ts"
+    "test": "NODE_ENV=test node --env-file-if-exists=.env --test test/*.test.ts",
+    "psgc:load": "node --env-file-if-exists=.env src/dev/psgc-load.ts"
   },
   "dependencies": {
     "@erp/shared": "*",
