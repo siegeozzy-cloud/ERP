@@ -1,0 +1,16 @@
+{
+  "name": "@erp/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Validation rules and API types used by the API, the web app and the phone app.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}

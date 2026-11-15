@@ -1,0 +1,29 @@
+{
+  "name": "erp",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "apps/api",
+    "apps/web",
+    "apps/mobile"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "db:up": "docker compose up -d --wait db",
+    "db:down": "docker compose down",
+    "dev:api": "npm run dev -w @erp/api",
+    "dev:web": "npm run dev -w @erp/web",
+    "dev:mobile": "npm run start -w @erp/mobile",
+    "lint": "oxlint",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test -w @erp/api",
+    "build": "npm run build -w @erp/web"
+  },
+  "devDependencies": {
+    "oxlint": "^1.93.0",
+    "typescript": "~7.0.2"
+  }
+}

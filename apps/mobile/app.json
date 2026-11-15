@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "ERP",
+    "slug": "erp",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "app.erp.mobile",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "app.erp.mobile",
+      "edgeToEdgeEnabled": true
+    }
+  }
+}
