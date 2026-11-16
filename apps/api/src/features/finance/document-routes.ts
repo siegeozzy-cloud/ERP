@@ -5,6 +5,7 @@ import {
   formatPeso,
   InvoiceInput,
   PaymentInput,
+  q4,
   ReverseInput,
   type Bill,
   type BillSummary,
@@ -12,11 +13,15 @@ import {
   type Invoice,
   type InvoiceSummary,
 } from '@erp/shared'
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { db } from '../../db/client.ts'
-import { accounts, bills, contacts, documentLines, payments, salesInvoices, type WorkspaceRow } from '../../db/schema.ts'
+import { accounts, bills, contacts, documentLines, items, payments, projectMilestones, projects, purchaseOrderLines, salesInvoices, stockMoves, timesheets, type WorkspaceRow } from '../../db/schema.ts'
+import { invoiceSoLines, uninvoiceSoLines } from '../crm/order-lines.ts'
+import { refreshPoStatus, unitBasis } from '../inventory/purchasing.ts'
+import { warnLow } from '../inventory/routes.ts'
+import { activeWarehouse, itemTotals, lockStockItem, stockIn, stockOut } from '../inventory/stock.ts'
 import { iso, type Executor, type Tx } from '../../db/types.ts'
 import { audit } from '../../lib/audit.ts'
 import { HttpError, parse } from '../../lib/errors.ts'
@@ -54,7 +59,23 @@ function baseOut(row: DocRow, settled: number) {
     balance: row.status === 'posted' ? row.amountDue - settled : row.status === 'draft' ? row.amountDue : 0,
     postedAt: iso(row.postedAt),
     journalEntryId: row.journalEntryId,
+    projectId: row.projectId,
   }
+}
+
+/** A project named on an invoice or bill must be this workspace's. */
+async function projectIdOf(db: Executor, workspaceId: string, id: string | null | undefined) {
+  if (!id) return null
+  const [p] = await db.select({ id: projects.id }).from(projects).where(and(eq(projects.id, id), eq(projects.workspaceId, workspaceId)))
+  if (!p) throw new HttpError(400, 'invalid', 'Choose a project in this workspace.', 'projectId')
+  return p.id
+}
+
+/** A voided invoice no longer bills its project's milestones or hours: they can be billed again. */
+async function freeProjectBilling(tx: Tx, invoiceId: string) {
+  await tx.update(projectMilestones).set({ invoiceId: null, retention: 0 }).where(eq(projectMilestones.invoiceId, invoiceId))
+  await tx.update(projects).set({ retentionInvoiceId: null }).where(eq(projects.retentionInvoiceId, invoiceId))
+  await tx.update(timesheets).set({ invoiceId: null }).where(eq(timesheets.invoiceId, invoiceId))
 }
 
 const lineValues = (workspaceId: string, kind: DocKind, docId: string, lines: PreparedLine[]) =>
@@ -67,19 +88,29 @@ async function storedLines(db: Executor, kind: DocKind, docId: string) {
     .from(documentLines)
     .where(kind === 'invoice' ? eq(documentLines.invoiceId, docId) : eq(documentLines.billId, docId))
     .orderBy(asc(documentLines.position))
-  return rows.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, vat: l.vat, accountId: l.accountId, ewtCodeId: l.ewtCodeId }))
+  return rows.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, vat: l.vat, accountId: l.accountId, ewtCodeId: l.ewtCodeId, itemId: l.itemId, poLineId: l.poLineId, soLineId: l.soLineId }))
 }
 
 /** The accounts posting needs, in one query (a transaction has one connection, so no parallel queries). */
 async function systemAccounts(db: Executor, workspaceId: string) {
-  const keys = ['ar', 'ap', 'output_vat', 'input_vat', 'ewt_payable', 'cwt'] as const
+  const keys = ['ar', 'ap', 'output_vat', 'input_vat', 'ewt_payable', 'cwt', 'inventory', 'cogs', 'price_variance'] as const
   const rows = await db.select({ id: accounts.id, key: accounts.systemKey }).from(accounts).where(and(eq(accounts.workspaceId, workspaceId), inArray(accounts.systemKey, [...keys])))
   const id = (key: (typeof keys)[number]) => {
     const row = rows.find((r) => r.key === key)
     if (!row) throw new HttpError(409, 'missing-account', `This workspace has no ${key.replace(/_/g, ' ')} account. Add it to the chart of accounts.`)
     return row.id
   }
-  return { ar: id('ar'), ap: id('ap'), outputVat: id('output_vat'), inputVat: id('input_vat'), ewtPayable: id('ewt_payable'), cwt: id('cwt') }
+  return {
+    ar: id('ar'),
+    ap: id('ap'),
+    outputVat: id('output_vat'),
+    inputVat: id('input_vat'),
+    ewtPayable: id('ewt_payable'),
+    cwt: id('cwt'),
+    inventory: id('inventory'),
+    cogs: id('cogs'),
+    priceVariance: id('price_variance'),
+  }
 }
 
 /** A cash or bank account of this workspace, for a payment. */
@@ -106,7 +137,7 @@ async function invoiceDetail(db: Executor, workspaceId: string, id: string): Pro
     .where(and(eq(salesInvoices.id, id), eq(salesInvoices.workspaceId, workspaceId)))
   if (!row) throw notFound('invoice')
   const lines = await db.select().from(documentLines).where(eq(documentLines.invoiceId, id)).orderBy(asc(documentLines.position))
-  return { ...baseOut(row.inv, row.settled), customer: contactOut(row.customer), lines: lines.map(lineOut), payments: await paymentsOf(db, 'invoice', id) }
+  return { ...baseOut(row.inv, row.settled), customer: contactOut(row.customer), warehouseId: row.inv.warehouseId, lines: lines.map(lineOut), payments: await paymentsOf(db, 'invoice', id) }
 }
 
 async function lockInvoice(tx: Tx, workspaceId: string, id: string) {
@@ -126,7 +157,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
       .where(and(eq(salesInvoices.workspaceId, ws.id), q.status ? eq(salesInvoices.status, q.status) : undefined, q.contactId ? eq(salesInvoices.customerId, q.contactId) : undefined))
       .orderBy(desc(salesInvoices.date), desc(salesInvoices.createdAt))
       .limit(500)
-    return { invoices: rows.map((r): InvoiceSummary => ({ ...baseOut(r.inv, r.settled), customer: r.customer })) }
+    return { invoices: rows.map((r): InvoiceSummary => ({ ...baseOut(r.inv, r.settled), customer: r.customer, warehouseId: r.inv.warehouseId })) }
   })
 
   app.get('/invoices/:id', needs('finance.view'), async (req) => ({ invoice: await invoiceDetail(db, workspaceOf(req).id, idOf('invoice', req.params)) }))
@@ -138,7 +169,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
     const id = await db.transaction(async (tx) => {
       const [row] = await tx
         .insert(salesInvoices)
-        .values({ workspaceId: ws.id, customerId: input.customerId, date: input.date, dueDate: input.dueDate ?? null, pricesIncludeVat: input.pricesIncludeVat, notes: input.notes ?? null, ...prepared.totals, createdBy: userOf(req).id })
+        .values({ workspaceId: ws.id, customerId: input.customerId, projectId: await projectIdOf(tx, ws.id, input.projectId), warehouseId: input.warehouseId ?? null, date: input.date, dueDate: input.dueDate ?? null, pricesIncludeVat: input.pricesIncludeVat, notes: input.notes ?? null, ...prepared.totals, createdBy: userOf(req).id })
         .returning({ id: salesInvoices.id })
       await tx.insert(documentLines).values(lineValues(ws.id, 'invoice', row!.id, prepared.lines))
       await audit(tx, req, { action: 'invoice.drafted', entity: 'invoice', entityId: row!.id, summary: `Drafted a sales invoice for ${prepared.contact.name} (${formatPeso(prepared.totals.total)})` })
@@ -159,7 +190,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
       await tx.insert(documentLines).values(lineValues(ws.id, 'invoice', id, prepared.lines))
       await tx
         .update(salesInvoices)
-        .set({ customerId: input.customerId, date: input.date, dueDate: input.dueDate ?? null, pricesIncludeVat: input.pricesIncludeVat, notes: input.notes ?? null, ...prepared.totals, updatedAt: new Date() })
+        .set({ customerId: input.customerId, projectId: await projectIdOf(tx, ws.id, input.projectId), warehouseId: input.warehouseId ?? null, date: input.date, dueDate: input.dueDate ?? null, pricesIncludeVat: input.pricesIncludeVat, notes: input.notes ?? null, ...prepared.totals, updatedAt: new Date() })
         .where(eq(salesInvoices.id, id))
       await audit(tx, req, { action: 'invoice.edited', entity: 'invoice', entityId: id, summary: `Edited a draft sales invoice for ${prepared.contact.name} (${formatPeso(prepared.totals.total)})` })
     })
@@ -183,18 +214,42 @@ export async function invoiceRoutes(app: FastifyInstance) {
     const id = idOf('invoice', req.params)
     const ws = workspaceOf(req)
     const user = userOf(req)
+    const stockBefore = new Map<string, number>()
     await db.transaction(async (tx) => {
       const current = await lockInvoice(tx, ws.id, id)
       if (current.status !== 'draft') throw new HttpError(409, 'locked', 'That invoice has already been posted.')
-      const prepared = await prepareDocument(tx, ws, 'invoice', { contactId: current.customerId, date: current.date, pricesIncludeVat: current.pricesIncludeVat, lines: await storedLines(tx, 'invoice', id) })
+      const prepared = await prepareDocument(tx, ws, 'invoice', {
+        contactId: current.customerId,
+        date: current.date,
+        pricesIncludeVat: current.pricesIncludeVat,
+        warehouseId: current.warehouseId,
+        lines: await storedLines(tx, 'invoice', id),
+      })
       assertTotal(prepared.totals, 'invoice')
+      // lines from a sales order: their stock went out on the delivery, so only the sale is booked here
+      await invoiceSoLines(tx, prepared.lines, prepared.items)
       await tx.delete(documentLines).where(eq(documentLines.invoiceId, id))
       await tx.insert(documentLines).values(lineValues(ws.id, 'invoice', id, prepared.lines))
       const number = await nextNumber(tx, ws.id, 'sales_invoice')
+      const system = await systemAccounts(tx, ws.id)
+      // stock items leave the warehouse at average cost: cost of sales, in the same entry
+      let cogs = 0
+      for (const [i, line] of prepared.lines.entries()) {
+        const item = line.itemId ? prepared.items.get(line.itemId) : undefined
+        if (item?.kind !== 'stock' || line.soLineId) continue
+        stockBefore.set(item.id, stockBefore.get(item.id) ?? (await itemTotals(tx, item.id)).qty)
+        await activeWarehouse(tx, ws.id, current.warehouseId!)
+        const locked = await lockStockItem(tx, ws.id, item.id)
+        cogs += await stockOut(tx, ws, { item: locked, warehouseId: current.warehouseId!, quantity: line.quantity, kind: 'issue', date: current.date, invoiceId: id, line: `Line ${i + 1}` })
+      }
       const entry = await postEntry(
         tx,
         { workspaceId: ws.id, date: current.date, memo: `Sales invoice ${number} — ${prepared.contact.name}`, source: 'sales_invoice', sourceId: id, createdBy: user.id },
-        postingLines('invoice', ws, current.customerId, prepared.lines, prepared.totals, await systemAccounts(tx, ws.id)),
+        [
+          ...postingLines('invoice', ws, current.customerId, prepared.lines, prepared.totals, system),
+          { accountId: system.cogs, debit: cogs },
+          { accountId: system.inventory, credit: cogs },
+        ],
       )
       await tx
         .update(salesInvoices)
@@ -202,6 +257,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
         .where(eq(salesInvoices.id, id))
       await audit(tx, req, { action: 'invoice.posted', entity: 'invoice', entityId: id, summary: `Posted sales invoice ${number} to ${prepared.contact.name} for ${formatPeso(prepared.totals.total)}` })
     })
+    if (stockBefore.size) await warnLow(ws, stockBefore)
     return { invoice: await invoiceDetail(db, ws.id, id) }
   })
 
@@ -214,6 +270,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
       const current = await lockInvoice(tx, ws.id, id)
       await voidDocument(tx, ws, 'invoice', current, input.date, userOf(req).id)
       await tx.update(salesInvoices).set({ status: 'void', updatedAt: new Date() }).where(eq(salesInvoices.id, id))
+      await freeProjectBilling(tx, id)
       await audit(tx, req, { action: 'invoice.voided', entity: 'invoice', entityId: id, summary: `Voided sales invoice ${current.number} (${formatPeso(current.total)})` })
     })
     return { invoice: await invoiceDetail(db, ws.id, id) }
@@ -284,6 +341,7 @@ export async function billRoutes(app: FastifyInstance) {
         .values({
           workspaceId: ws.id,
           supplierId: input.supplierId,
+          projectId: await projectIdOf(tx, ws.id, input.projectId),
           supplierInvoiceNo: input.supplierInvoiceNo ?? null,
           date: input.date,
           dueDate: input.dueDate ?? null,
@@ -314,6 +372,7 @@ export async function billRoutes(app: FastifyInstance) {
         .update(bills)
         .set({
           supplierId: input.supplierId,
+          projectId: await projectIdOf(tx, ws.id, input.projectId),
           supplierInvoiceNo: input.supplierInvoiceNo ?? null,
           date: input.date,
           dueDate: input.dueDate ?? null,
@@ -348,6 +407,8 @@ export async function billRoutes(app: FastifyInstance) {
       const current = await lockBill(tx, ws.id, id)
       if (current.status !== 'draft') throw new HttpError(409, 'locked', 'That bill has already been posted.')
       const prepared = await prepareDocument(tx, ws, 'bill', { contactId: current.supplierId, date: current.date, pricesIncludeVat: current.pricesIncludeVat, lines: await storedLines(tx, 'bill', id) })
+      // lines billing a purchase order: no more than was received (or ordered, for services)
+      const billing = await billPoLines(tx, ws, prepared.lines, prepared.items)
       assertTotal(prepared.totals, 'bill')
       await tx.delete(documentLines).where(eq(documentLines.billId, id))
       await tx.insert(documentLines).values(lineValues(ws.id, 'bill', id, prepared.lines))
@@ -356,7 +417,7 @@ export async function billRoutes(app: FastifyInstance) {
       const entry = await postEntry(
         tx,
         { workspaceId: ws.id, date: current.date, memo: `Bill ${number} — ${prepared.contact.name}${ref}`, source: 'bill', sourceId: id, createdBy: user.id },
-        postingLines('bill', ws, current.supplierId, prepared.lines, prepared.totals, await systemAccounts(tx, ws.id)),
+        postingLines('bill', ws, current.supplierId, billing, prepared.totals, await systemAccounts(tx, ws.id)),
       )
       await tx.update(bills).set({ status: 'posted', number, ...prepared.totals, journalEntryId: entry.id, postedAt: new Date(), updatedAt: new Date() }).where(eq(bills.id, id))
       await audit(tx, req, { action: 'bill.posted', entity: 'bill', entityId: id, summary: `Posted bill ${number} from ${prepared.contact.name} for ${formatPeso(prepared.totals.total)}` })
@@ -404,6 +465,26 @@ async function voidDocument(tx: Tx, ws: WorkspaceRow, kind: DocKind, doc: DocRow
   if (live) throw new HttpError(409, 'has-payments', `Void the payments on this ${WORD[kind]} first.`)
   const on = date ?? maxDate(todayInManila(), doc.date)
   await reverseEntry(tx, ws.id, doc.journalEntryId!, on, userId, `Void of ${kind === 'invoice' ? 'sales invoice' : 'bill'} ${doc.number}`)
+  if (kind === 'invoice') {
+    // the stock it took comes back, lot by lot, at the value it left at (the reversal undid the cost of sales)
+    const issued = await tx.select().from(stockMoves).where(and(eq(stockMoves.invoiceId, doc.id), eq(stockMoves.kind, 'issue')))
+    for (const m of issued) {
+      const item = await lockStockItem(tx, ws.id, m.itemId)
+      await stockIn(tx, ws, { item, warehouseId: m.warehouseId, lotId: m.lotId, quantity: -m.quantity, value: -m.value, kind: 'return', date: on, invoiceId: doc.id })
+    }
+    // what it billed on sales orders can be invoiced again (the goods stay delivered)
+    await uninvoiceSoLines(tx, doc.id)
+  } else {
+    // what it billed on purchase orders can be billed again
+    const lines = await tx.select().from(documentLines).where(and(eq(documentLines.billId, doc.id), isNotNull(documentLines.poLineId)))
+    const pos = new Set<string>()
+    for (const l of lines) {
+      const [pl] = await tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.id, l.poLineId!)).for('update')
+      await tx.update(purchaseOrderLines).set({ billedQty: q4(pl!.billedQty - l.quantity) }).where(eq(purchaseOrderLines.id, pl!.id))
+      pos.add(pl!.poId)
+    }
+    for (const po of pos) await refreshPoStatus(tx, po)
+  }
 }
 
 const maxDate = (a: string, b: string) => (a > b ? a : b)
@@ -493,4 +574,32 @@ export async function paymentRoutes(app: FastifyInstance) {
     })
     return result.kind === 'invoice' ? { invoice: await invoiceDetail(db, ws.id, result.id) } : { bill: await billDetail(db, ws.id, result.id) }
   })
+}
+
+/**
+ * Bill lines that pay for purchase-order lines: checks there's that much left to bill, records it
+ * as billed, and works out the GRNI each clears (what the goods came in at). Returns the lines
+ * ready for postingLines.
+ */
+async function billPoLines(tx: Tx, ws: WorkspaceRow, lines: PreparedLine[], itemsById: Map<string, typeof items.$inferSelect>) {
+  const out: (PreparedLine & { grniValue?: number })[] = []
+  const pos = new Set<string>()
+  for (const [i, line] of lines.entries()) {
+    if (!line.poLineId) {
+      out.push(line)
+      continue
+    }
+    const [pl] = await tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.id, line.poLineId)).for('update')
+    const item = itemsById.get(line.itemId!)!
+    const ceiling = item.kind === 'stock' ? pl!.receivedQty : pl!.quantity
+    const left = q4(ceiling - pl!.billedQty)
+    if (line.quantity > left) {
+      throw new HttpError(409, 'over-billed', `Line ${i + 1}: only ${left} of ${item.name} ${item.kind === 'stock' ? 'has been received and not billed' : 'is left to bill'} on that purchase order.`, 'lines')
+    }
+    await tx.update(purchaseOrderLines).set({ billedQty: q4(pl!.billedQty + line.quantity) }).where(eq(purchaseOrderLines.id, pl!.id))
+    pos.add(pl!.poId)
+    out.push(item.kind === 'stock' ? { ...line, grniValue: Math.round(line.quantity * unitBasis(ws, pl!)) } : line)
+  }
+  for (const po of pos) await refreshPoStatus(tx, po)
+  return out
 }

@@ -5,10 +5,19 @@ export type ApiErrorBody = { error: { code: string; message: string; field?: str
 
 export type PublicUser = { id: string; name: string; email: string }
 
-export type Session = { user: PublicUser }
+/**
+ * A "Try the demo" account: when it's wiped, and the email and password that sign the same demo in on
+ * the phone app. Null for everyone else.
+ */
+export type DemoInfo = { workspaceId: string; expiresAt: string; email: string; password: string }
+
+export type Session = { user: PublicUser; demo: DemoInfo | null }
 
 /** POST /api/auth/signin. `token` is for clients that can't use the cookie (phone app, cross-site web). */
 export type SignInResponse = Session & { token: string }
+
+/** POST /api/demo. `token` is null when this browser is already in its demo (keep the token it has). */
+export type DemoStartResponse = Session & { token: string | null }
 
 /**
  * Sign-up, resend and forgot-password all answer "check your inbox".

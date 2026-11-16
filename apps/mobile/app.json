@@ -2,6 +2,7 @@
   "expo": {
     "name": "ERP",
     "slug": "erp",
+    "scheme": "erp",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
@@ -11,7 +12,35 @@
     },
     "android": {
       "package": "app.erp.mobile",
-      "edgeToEdgeEnabled": true
-    }
+      "edgeToEdgeEnabled": true,
+      "versionCode": 1
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "color": "#171717"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ERP uses the camera to scan barcodes on stock.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "ERP records where you are when you clock in or out, so your employer can see you were at work."
+        }
+      ]
+    ],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "description": "ERP for Philippine businesses: clock in, leave, payslips, stock counts. Includes a demo business to try."
   }
 }

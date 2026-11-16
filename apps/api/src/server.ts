@@ -1,6 +1,7 @@
 import { buildApp } from './app.ts'
 import { config } from './config.ts'
 import { pool, runMigrations } from './db/client.ts'
+import { startDemoJobs } from './features/demo/routes.ts'
 import { checkMail } from './lib/mailer.ts'
 
 try {
@@ -14,6 +15,8 @@ try {
 }
 
 const app = await buildApp()
+// "Try the demo": keeps a spare built, and wipes demos nightly (hooks must be added before listening)
+startDemoJobs(app)
 try {
   await app.listen({ host: config.HOST, port: config.PORT })
 } catch (e) {

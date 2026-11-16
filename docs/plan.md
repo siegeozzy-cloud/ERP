@@ -4,7 +4,7 @@ A multi-tenant ERP for Philippine businesses. People sign in, then either **join
 one-time code or **create** one from a template made for their kind of business. It runs on the web
 and on phones.
 
-**Status:** Phases 0, 1 and 2 are built. The phases, and what each one left for later, are in
+**Status:** Phases 0, 1, 1M, 2, 3, 4 and 5 are built. The phases, and what each one left for later, are in
 [roadmap.md](roadmap.md).
 
 **Scope:** a side project, built as a working showcase for investors. It runs on free tiers. It is

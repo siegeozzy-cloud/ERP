@@ -1,10 +1,11 @@
-import { DEFAULT_ROLES, JoinInput, templateByKey, WorkspaceInput, WorkspaceUpdate, type ModuleSlug, type Permission, type Workspace, type WorkspaceSummary } from '@erp/shared'
+import { checkAttributes, licenceFields, DEFAULT_ROLES, JoinInput, templateByKey, WorkspaceInput, WorkspaceUpdate, type ModuleSlug, type Permission, type Workspace, type WorkspaceSummary } from '@erp/shared'
 import { and, asc, eq, gt, isNull, ne, sql } from 'drizzle-orm'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { db } from '../../db/client.ts'
-import { accounts, bills, joinCodes, memberships, roles, salesInvoices, workspaces, type RoleRow, type WorkspaceRow } from '../../db/schema.ts'
+import { accounts, bills, joinCodes, memberships, roles, salesInvoices, units, workspaces, type RoleRow, type WorkspaceRow } from '../../db/schema.ts'
 import type { Tx } from '../../db/types.ts'
 import { audit } from '../../lib/audit.ts'
+import { membersWith, notifyLater, sendPush } from '../../lib/push.ts'
 import { hashToken } from '../../lib/crypto.ts'
 import { HttpError, parse } from '../../lib/errors.ts'
 import { requireAuth, userOf } from '../../lib/session.ts'
@@ -26,6 +27,7 @@ export const workspaceOut = (w: WorkspaceRow, role: RoleRow): Workspace => ({
   modules: w.modules as ModuleSlug[],
   dpoName: w.dpoName,
   dpoEmail: w.dpoEmail,
+  licences: w.licences ?? {},
   role: { id: role.id, key: role.key, name: role.name },
   permissions: role.permissions as Permission[],
 })
@@ -81,7 +83,10 @@ export default async function workspaceRoutes(app: FastifyInstance) {
       const owner = await seedRoles(tx, w!.id)
       await tx.insert(memberships).values({ workspaceId: w!.id, userId: user.id, roleId: owner.id })
       await seedFinance(tx, w!.id)
-      if (template.accounts.length) await tx.insert(accounts).values(template.accounts.map((a) => ({ ...a, workspaceId: w!.id })))
+      if (template.accounts.length) {
+        await tx.insert(accounts).values(template.accounts.map((a) => ({ workspaceId: w!.id, code: a.code, name: a.name, type: a.type, systemKey: a.key ?? null })))
+      }
+      if (template.units?.length) await tx.insert(units).values(template.units.map(([code, name]) => ({ workspaceId: w!.id, code, name }))).onConflictDoNothing()
       await audit(tx, req, { workspaceId: w!.id, action: 'workspace.created', entity: 'workspace', entityId: w!.id, summary: `Created the workspace from the ${template.name} template` })
       return { workspace: w!, owner }
     })
@@ -129,6 +134,13 @@ export default async function workspaceRoutes(app: FastifyInstance) {
       })
       return { workspace: row.workspace, role: row.role }
     })
+    await notifyLater(async () =>
+      sendPush(await membersWith(joined.workspace.id, 'members.manage', user.id), {
+        title: joined.workspace.name,
+        body: `${user.name} joined as ${joined.role.name}.`,
+        data: { workspaceId: joined.workspace.id, screen: 'members' },
+      }),
+    )
     return { workspace: workspaceOut(joined.workspace, joined.role) }
   })
 }
@@ -147,6 +159,7 @@ const FIELD_WORDS: Record<string, string> = {
   dpoName: 'data protection officer',
   dpoEmail: 'data protection officer',
   modules: 'modules',
+  licences: 'licences',
 }
 
 /** Changing a field: what it was and what it became, for the audit log. */
@@ -187,7 +200,14 @@ export async function workspaceDetailRoutes(app: FastifyInstance) {
         }
       }
       const address = await composeAddress(tx, input.street, input.barangayCode)
-      const next = { ...input, ...address }
+      // licences and permits: only the ones the template asks for, checked (dates, options)
+      let licences = ws.licences ?? {}
+      if (input.licences) {
+        const checked = checkAttributes(licenceFields(templateByKey(ws.template)?.licences ?? []), input.licences)
+        if ('key' in checked) throw new HttpError(400, 'invalid', checked.message, 'licences')
+        licences = checked.ok
+      }
+      const next = { ...input, ...address, licences }
       const diff = changes(ws as unknown as Record<string, unknown>, next)
       const [row] = await tx
         .update(workspaces)

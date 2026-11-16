@@ -1,0 +1,33 @@
+# Render Blueprint for the API (docs/deploy.md). In Render: New → Blueprint → this repository.
+# The database is Neon's (free); paste its connection string as DATABASE_URL when Render asks.
+services:
+  - type: web
+    name: erp-api
+    runtime: node
+    plan: free
+    region: singapore
+    # only the API and the shared package: the phone app's dependencies aren't needed on a server
+    buildCommand: npm ci -w @erp/api -w @erp/shared --include-workspace-root
+    startCommand: npm start -w @erp/api
+    # touches no database, so the free Postgres can sleep
+    healthCheckPath: /api/ping
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "24"
+      - key: DATABASE_URL
+        sync: false
+      # 32 random bytes, base64. Keep a copy: without it the encrypted ID numbers can't be read.
+      - key: ENCRYPTION_KEY
+        sync: false
+      # the web app's address (Vercel), e.g. https://erp-demo.vercel.app
+      - key: APP_URL
+        sync: false
+      # this service's own address, e.g. https://erp-api.onrender.com
+      - key: API_URL
+        sync: false
+      - key: DEMO
+        value: "on"
+      - key: DEMO_SPARES
+        value: "1"

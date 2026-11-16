@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { TryDemoCard } from '@/features/demo/demo'
 import { api, tokenStore } from '@/lib/api'
 import { AuthHeading } from './AuthLayout'
 import { safeRedirect, sessionQuery } from './session'
@@ -101,6 +102,7 @@ export function SignInPage({ search }: { search: SignInSearch }) {
           Create an account
         </Link>
       </p>
+      <TryDemoCard />
     </div>
   )
 }

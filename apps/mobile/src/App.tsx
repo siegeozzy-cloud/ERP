@@ -1,80 +1,116 @@
-import { APP_NAME } from '@erp/shared'
+import type { PushData } from '@erp/shared'
+import { DarkTheme, DefaultTheme, NavigationContainer, useNavigationContainerRef } from '@react-navigation/native'
+import { createNativeStackNavigator } from '@react-navigation/native-stack'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import * as Notifications from 'expo-notifications'
 import { StatusBar } from 'expo-status-bar'
-import { useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, Pressable, StyleSheet, Text, useColorScheme, View } from 'react-native'
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
-import { API_URL } from './config'
+import { useEffect } from 'react'
+import { Platform, Pressable, Text, useColorScheme, View } from 'react-native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { ApiError } from './lib/api'
+import { SessionProvider, useSession } from './lib/session'
+import { ForgotScreen, SignInScreen, SignUpScreen, type SignedOutStack } from './screens/auth'
+import { ApprovalsScreen, ClockScreen, LeaveScreen, PayslipScreen, PayslipsScreen } from './screens/hr'
+import { StockScreen } from './screens/stock'
+import { TaskScreen, TasksScreen } from './screens/tasks'
+import { AccountScreen, HomeScreen, JoinScreen, WorkspacesScreen, type SignedInStack } from './screens/workspace'
+import { Brand, useColors } from './ui/components'
 
-type Status = 'checking' | 'online' | 'offline'
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // a 4xx won't change by asking again; a dropped connection might
+      retry: (count, error) => !(error instanceof ApiError && error.status >= 400 && error.status < 500) && count < 2,
+    },
+  },
+})
 
-/**
- * Phase 0: the phone app exists, reads the shared package, and can reach the API.
- * Sign-in, joining a workspace and the workspace switcher come in Phase 1M.
- */
-export function App() {
-  const dark = useColorScheme() === 'dark'
-  const [status, setStatus] = useState<Status>('checking')
+const Out = createNativeStackNavigator<SignedOutStack>()
+const In = createNativeStackNavigator<SignedInStack>()
 
-  const check = useCallback(async () => {
-    setStatus('checking')
-    try {
-      const res = await fetch(`${API_URL}/api/ping`, { signal: AbortSignal.timeout(10_000) })
-      setStatus(res.ok ? 'online' : 'offline')
-    } catch {
-      setStatus('offline')
-    }
-  }, [])
-
-  useEffect(() => {
-    void check()
-  }, [check])
-
-  const colors = dark ? { bg: '#0a0a0a', fg: '#fafafa', muted: '#a1a1a1', card: '#171717', border: '#262626' } : { bg: '#ffffff', fg: '#0a0a0a', muted: '#737373', card: '#fafafa', border: '#e5e5e5' }
-  const dot = status === 'online' ? '#16a34a' : status === 'offline' ? '#dc2626' : colors.muted
-
+function AccountButton({ onPress }: { onPress: () => void }) {
+  const c = useColors()
   return (
-    <SafeAreaProvider>
-      <SafeAreaView style={[styles.screen, { backgroundColor: colors.bg }]}>
-        <StatusBar style={dark ? 'light' : 'dark'} />
-        <View style={styles.brand}>
-          <View style={[styles.mark, { backgroundColor: colors.fg }]}>
-            <Text style={[styles.markText, { color: colors.bg }]}>{APP_NAME.slice(0, 1)}</Text>
-          </View>
-          <Text style={[styles.title, { color: colors.fg }]}>{APP_NAME}</Text>
-        </View>
-        <Text style={[styles.lead, { color: colors.muted }]}>Sign-in, joining a workspace and clocking in arrive in the next phases.</Text>
-
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <View style={styles.row}>
-            {status === 'checking' ? <ActivityIndicator size="small" /> : <View style={[styles.dot, { backgroundColor: dot }]} />}
-            <Text style={[styles.cardTitle, { color: colors.fg }]}>
-              {status === 'checking' ? 'Checking the server…' : status === 'online' ? 'Connected to the server' : 'Can’t reach the server'}
-            </Text>
-          </View>
-          <Text style={[styles.small, { color: colors.muted }]}>{API_URL}</Text>
-          {status === 'offline' && (
-            <Pressable onPress={check} style={({ pressed }) => [styles.button, { backgroundColor: colors.fg, opacity: pressed ? 0.8 : 1 }]}>
-              <Text style={[styles.buttonText, { color: colors.bg }]}>Try again</Text>
-            </Pressable>
-          )}
-        </View>
-      </SafeAreaView>
-    </SafeAreaProvider>
+    // the web preview's header has no edge padding of its own; the phone's does
+    <Pressable accessibilityRole="button" accessibilityLabel="Account" onPress={onPress} hitSlop={10} style={{ paddingRight: Platform.OS === 'web' ? 16 : 0 }}>
+      <Text style={{ color: c.fg, fontSize: 16 }}>Account</Text>
+    </Pressable>
   )
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, paddingHorizontal: 24, paddingTop: 48, gap: 16 },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  mark: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  markText: { fontSize: 16, fontWeight: '700' },
-  title: { fontSize: 24, fontWeight: '600' },
-  lead: { fontSize: 15, lineHeight: 22 },
-  card: { borderWidth: 1, borderRadius: 14, padding: 16, gap: 8, marginTop: 8 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  cardTitle: { fontSize: 16, fontWeight: '600' },
-  small: { fontSize: 13 },
-  button: { marginTop: 8, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
-  buttonText: { fontSize: 15, fontWeight: '600' },
-})
+function Navigation() {
+  const { state, chooseWorkspace } = useSession()
+  const dark = useColorScheme() === 'dark'
+  const c = useColors()
+  const nav = useNavigationContainerRef<SignedInStack>()
+
+  // tapping a notification opens the workspace it's about
+  useEffect(() => {
+    if (Platform.OS === 'web' || state.status !== 'signed-in') return
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as PushData
+      if (!data.workspaceId) return
+      const screen = data.screen === 'payslips' ? 'Payslips' : data.screen === 'leave' ? 'Leave' : data.screen === 'approvals' ? 'Approvals' : data.screen === 'tasks' ? 'Tasks' : 'Home'
+      void chooseWorkspace(data.workspaceId).then(() => nav.isReady() && nav.navigate(screen))
+    })
+    return () => sub.remove()
+  }, [state.status, chooseWorkspace, nav])
+
+  if (state.status === 'loading') {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: c.bg }}>
+        <Brand />
+      </View>
+    )
+  }
+
+  const theme = dark ? { ...DarkTheme, colors: { ...DarkTheme.colors, background: c.bg, card: c.bg } } : { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: c.bg, card: c.bg } }
+
+  return (
+    <NavigationContainer ref={nav} theme={theme}>
+      {state.status === 'signed-out' ? (
+        <Out.Navigator screenOptions={{ headerShadowVisible: false }}>
+          <Out.Screen name="SignIn" component={SignInScreen} options={{ headerShown: false }} />
+          <Out.Screen name="SignUp" component={SignUpScreen} options={{ title: '' }} />
+          <Out.Screen name="Forgot" component={ForgotScreen} options={{ title: '' }} />
+        </Out.Navigator>
+      ) : (
+        <In.Navigator
+          // a remembered workspace opens straight away; otherwise, the list
+          initialRouteName={state.workspaceId ? 'Home' : 'Workspaces'}
+          screenOptions={({ navigation }) => ({
+            headerShadowVisible: false,
+            headerRight: () => <AccountButton onPress={() => navigation.navigate('Account')} />,
+          })}
+        >
+          <In.Screen name="Workspaces" component={WorkspacesScreen} options={{ title: 'Workspaces' }} />
+          <In.Screen name="Join" component={JoinScreen} options={{ title: 'Join' }} />
+          <In.Screen name="Home" component={HomeScreen} options={{ title: '' }} />
+          <In.Screen name="Stock" component={StockScreen} options={{ title: 'Stock' }} />
+          <In.Screen name="Clock" component={ClockScreen} options={{ title: 'Time' }} />
+          <In.Screen name="Leave" component={LeaveScreen} options={{ title: 'Leave' }} />
+          <In.Screen name="Payslips" component={PayslipsScreen} options={{ title: 'Payslips' }} />
+          <In.Screen name="Payslip" component={PayslipScreen} options={{ title: 'Payslip' }} />
+          <In.Screen name="Approvals" component={ApprovalsScreen} options={{ title: 'Approvals' }} />
+          <In.Screen name="Tasks" component={TasksScreen} options={{ title: 'My tasks' }} />
+          <In.Screen name="Task" component={TaskScreen} options={{ title: 'Task' }} />
+          <In.Screen name="Account" component={AccountScreen} options={{ title: 'Account', headerRight: undefined }} />
+        </In.Navigator>
+      )}
+    </NavigationContainer>
+  )
+}
+
+export function App() {
+  const dark = useColorScheme() === 'dark'
+  return (
+    <SafeAreaProvider>
+      <QueryClientProvider client={queryClient}>
+        <SessionProvider>
+          <StatusBar style={dark ? 'light' : 'dark'} />
+          <Navigation />
+        </SessionProvider>
+      </QueryClientProvider>
+    </SafeAreaProvider>
+  )
+}

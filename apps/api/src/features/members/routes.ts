@@ -19,6 +19,7 @@ import { db, isUniqueViolation } from '../../db/client.ts'
 import { auditLog, joinCodes, memberships, roles, users, type RoleRow } from '../../db/schema.ts'
 import type { Executor, Tx } from '../../db/types.ts'
 import { audit } from '../../lib/audit.ts'
+import { notifyLater, sendPush } from '../../lib/push.ts'
 import { hashToken } from '../../lib/crypto.ts'
 import { HttpError, parse } from '../../lib/errors.ts'
 import { userOf } from '../../lib/session.ts'
@@ -100,7 +101,7 @@ export default async function memberRoutes(app: FastifyInstance) {
     const { userId } = parse(UserParam, req.params)
     const { roleId } = parse(MemberUpdate, req.body)
     const ws = workspaceOf(req)
-    await db.transaction(async (tx) => {
+    const changed = await db.transaction(async (tx) => {
       const [current] = await tx
         .select({ m: memberships, role: roles, name: users.name })
         .from(memberships)
@@ -110,7 +111,7 @@ export default async function memberRoutes(app: FastifyInstance) {
         .for('update', { of: memberships })
       if (!current) throw new HttpError(404, 'not-found', 'That person isn’t in this workspace.')
       const next = await roleIn(tx, ws.id, roleId)
-      if (current.role.id === next.id) return
+      if (current.role.id === next.id) return null
       if ((current.role.key === 'owner' || next.key === 'owner') && !isOwner(req)) throw new HttpError(403, 'forbidden', 'Only an owner can make someone an owner, or change an owner’s role.', 'roleId')
       assertCanGrant(req, next.permissions)
       await tx.update(memberships).set({ roleId: next.id }).where(and(eq(memberships.workspaceId, ws.id), eq(memberships.userId, userId)))
@@ -123,7 +124,11 @@ export default async function memberRoutes(app: FastifyInstance) {
         before: { role: current.role.name },
         after: { role: next.name },
       })
+      return next
     })
+    if (changed && userId !== userOf(req).id) {
+      await notifyLater(() => sendPush([userId], { title: ws.name, body: `Your role is now ${changed.name}.`, data: { workspaceId: ws.id, screen: 'home' } }))
+    }
     return { ok: true }
   })
 

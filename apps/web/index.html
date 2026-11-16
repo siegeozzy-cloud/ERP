@@ -4,17 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>ERP</title>
+    <title>ERP · One system for running a Philippine business</title>
+    <meta name="description" content="Books that follow BIR rules, payroll with SSS, PhilHealth and Pag-IBIG, stock, sales, production and projects, on the web and the phone. Try the demo: no sign-up." />
+    <meta property="og:title" content="ERP · One system for running a Philippine business" />
+    <meta property="og:description" content="Books that follow BIR rules, payroll with SSS, PhilHealth and Pag-IBIG, stock, sales, production and projects. Try the demo: no sign-up." />
+    <meta property="og:image" content="/landing/dashboard.jpg" />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23171717'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='17' font-weight='700' fill='white' text-anchor='middle'%3EE%3C/text%3E%3C/svg%3E" />
-    <script>
-      // Follow the system's light or dark setting before the first paint, so there's no flash.
-      ;(() => {
-        const dark = window.matchMedia('(prefers-color-scheme: dark)')
-        const apply = () => document.documentElement.classList.toggle('dark', dark.matches)
-        apply()
-        dark.addEventListener('change', apply)
-      })()
-    </script>
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

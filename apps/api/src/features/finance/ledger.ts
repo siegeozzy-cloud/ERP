@@ -27,6 +27,12 @@ export async function systemAccount(db: Executor, workspaceId: string, key: stri
   return row.id
 }
 
+/** An account only some templates have (e.g. `spoilage`), or null. */
+export async function systemAccountIfAny(db: Executor, workspaceId: string, key: string) {
+  const [row] = await db.select({ id: accounts.id }).from(accounts).where(and(eq(accounts.workspaceId, workspaceId), eq(accounts.systemKey, key), eq(accounts.active, true)))
+  return row?.id ?? null
+}
+
 /** The rate in force on `date` for a tax code: the newest row that started on or before it. */
 export async function taxRateOn(db: Executor, workspaceId: string, code: string, date: string) {
   const [row] = await db

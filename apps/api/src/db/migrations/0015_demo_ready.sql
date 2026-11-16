@@ -1,0 +1,1 @@
+ALTER TABLE "demo_accounts" ADD COLUMN "ready" boolean DEFAULT false NOT NULL;

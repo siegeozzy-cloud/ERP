@@ -26,7 +26,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Textarea } from '@/components/ui/textarea'
-import { useWorkspace } from '@/features/workspaces/queries'
+import { projectQueries } from '@/features/projects/queries'
+import { inventoryQueries } from '@/features/inventory/queries'
+import { useCan, useWorkspace } from '@/features/workspaces/queries'
 import { api, ApiError } from '@/lib/api'
 import { today } from '@/lib/dates'
 import { cn } from '@/lib/utils'
@@ -35,8 +37,8 @@ import { ContactDialog } from './ContactsPage'
 import { KIND_TEXT, type DocKind } from './DocumentListPage'
 import { financeQueries, useWorkspaceMutation } from './queries'
 
-type LineValues = { description: string; quantity: string; unitPrice: string; vat: VatTreatment; accountId: string; ewtCodeId: string }
-type Values = { contactId: string; supplierInvoiceNo: string; date: string; dueDate: string; pricesIncludeVat: boolean; notes: string; lines: LineValues[] }
+type LineValues = { description: string; quantity: string; unitPrice: string; vat: VatTreatment; accountId: string; ewtCodeId: string; itemId: string; poLineId: string; soLineId: string }
+type Values = { contactId: string; supplierInvoiceNo: string; date: string; dueDate: string; pricesIncludeVat: boolean; notes: string; warehouseId: string; projectId: string; lines: LineValues[] }
 
 const NEW_CONTACT = '__new'
 
@@ -84,7 +86,17 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
   const defaultVat: VatTreatment = kind === 'invoice' && workspace.vatStatus === 'non_vat' ? 'none' : 'vatable'
   const vatOptions = VAT_TREATMENTS.filter((t) => kind === 'bill' || (workspace.vatStatus === 'vat' ? t !== 'none' : t === 'none'))
   const ewtCodes = taxCodes.filter((t) => t.kind === 'ewt' && t.active)
-  const blankLine = (ewtCodeId = ''): LineValues => ({ description: '', quantity: '1', unitPrice: '', vat: defaultVat, accountId: defaultAccount, ewtCodeId })
+  const blankLine = (ewtCodeId = ''): LineValues => ({ description: '', quantity: '1', unitPrice: '', vat: defaultVat, accountId: defaultAccount, ewtCodeId, itemId: '', poLineId: '', soLineId: '' })
+  // items on invoices (Phase 3), when Inventory is on and the role can see it
+  const can = useCan()
+  const usesItems = kind === 'invoice' && workspace.modules.includes('inventory') && can('inventory.view')
+  const itemsQ = useQuery({ ...inventoryQueries.items(workspaceId), enabled: usesItems })
+  const warehousesQ = useQuery({ ...inventoryQueries.warehouses(workspaceId), enabled: usesItems })
+  const grniAccount = accounts.find((a) => a.systemKey === 'grni')
+  // Phase 7: tag it to a project for job costing (a project's page links here with ?projectId=)
+  const initialProjectId = new URLSearchParams(window.location.search).get('projectId')
+  const usesProjects = workspace.modules.includes('projects') && can('projects.view')
+  const projectsQ = useQuery({ ...projectQueries.list(workspaceId), enabled: usesProjects })
 
   const form = useForm<Values>({
     defaultValues: existing
@@ -95,7 +107,12 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
           dueDate: existing.dueDate ?? '',
           pricesIncludeVat: existing.pricesIncludeVat,
           notes: existing.notes ?? '',
+          warehouseId: 'warehouseId' in existing ? (existing.warehouseId ?? '') : '',
+          projectId: existing.projectId ?? '',
           lines: existing.lines.map((l) => ({
+            itemId: l.itemId ?? '',
+            poLineId: l.poLineId ?? '',
+            soLineId: l.soLineId ?? '',
             description: l.description,
             quantity: String(l.quantity),
             unitPrice: centavosToInput(l.unitPrice),
@@ -104,7 +121,7 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
             ewtCodeId: l.ewtCodeId ?? '',
           })),
         }
-      : { contactId: '', supplierInvoiceNo: '', date: today(), dueDate: '', pricesIncludeVat: false, notes: '', lines: [blankLine()] },
+      : { contactId: '', supplierInvoiceNo: '', date: today(), dueDate: '', pricesIncludeVat: false, notes: '', warehouseId: '', projectId: initialProjectId ?? '', lines: [blankLine()] },
   })
   const lines = useFieldArray({ control: form.control, name: 'lines' })
   const { errors, isSubmitting } = form.formState
@@ -154,6 +171,8 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
       const body = {
         [kind === 'invoice' ? 'customerId' : 'supplierId']: v.contactId,
         ...(kind === 'bill' ? { supplierInvoiceNo: v.supplierInvoiceNo } : {}),
+        ...(kind === 'invoice' ? { warehouseId: v.warehouseId || null } : {}),
+        projectId: v.projectId || null,
         date: v.date,
         dueDate: v.dueDate || null,
         pricesIncludeVat: v.pricesIncludeVat,
@@ -165,6 +184,9 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
           vat: l.vat,
           accountId: l.accountId,
           ewtCodeId: kind === 'bill' && l.ewtCodeId ? l.ewtCodeId : null,
+          itemId: l.itemId || null,
+          poLineId: l.poLineId || null,
+          soLineId: l.soLineId || null,
         })),
       }
       try {
@@ -174,10 +196,28 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
       } catch (e) {
         const field = e instanceof ApiError ? e.field : undefined
         if (field && ['customerId', 'supplierId'].includes(field)) form.setError('contactId', { message: (e as Error).message })
-        else if (field === 'date' || field === 'dueDate') form.setError(field, { message: (e as Error).message })
+        else if (field === 'date' || field === 'dueDate' || field === 'warehouseId') form.setError(field, { message: (e as Error).message })
         else form.setError('root', { message: e instanceof Error ? e.message : 'Something went wrong. Try again.' })
       }
     })
+
+  /** Picking an item fills in what it is, its price and where its sales go. */
+  function pickItem(i: number, itemId: string) {
+    const it = itemsQ.data?.find((x) => x.id === itemId)
+    if (!it) return
+    form.setValue(`lines.${i}.description`, it.name)
+    form.setValue(`lines.${i}.unitPrice`, centavosToInput(it.salesPrice))
+    if (vatOptions.includes(it.salesVat)) form.setValue(`lines.${i}.vat`, it.salesVat)
+    form.setValue(`lines.${i}.accountId`, it.salesAccountId ?? defaultAccount)
+    if (it.kind === 'stock' && !form.getValues('warehouseId')) form.setValue('warehouseId', warehousesQ.data?.find((w) => w.active)?.id ?? '')
+    // the customer's price list, when they have one (Phase 8)
+    const customerId = form.getValues('contactId')
+    if (customerId) {
+      void api<{ price: { price: number } }>(`/w/${workspaceId}/sales/price?itemId=${itemId}&customerId=${customerId}&quantity=${Number(form.getValues(`lines.${i}.quantity`)) || 1}`)
+        .then(({ price }) => form.setValue(`lines.${i}.unitPrice`, centavosToInput(price.price)))
+        .catch(() => undefined)
+    }
+  }
 
   /** Picking a supplier fills their usual withholding code into lines that have none. */
   function onContactChange(id: string) {
@@ -234,6 +274,38 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
                 <Input id="supplierInvoiceNo" {...form.register('supplierInvoiceNo')} />
               </div>
             )}
+            {usesItems && (
+              <div className="grid gap-2 md:col-span-2">
+                <Label htmlFor="warehouseId">Goods leave from</Label>
+                <NativeSelect id="warehouseId" aria-invalid={!!errors.warehouseId} {...form.register('warehouseId')}>
+                  <option value="">No stock items on this invoice</option>
+                  {warehousesQ.data
+                    ?.filter((w) => w.active)
+                    .map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                </NativeSelect>
+                {errors.warehouseId && <p className="text-destructive text-sm">{errors.warehouseId.message}</p>}
+              </div>
+            )}
+            {usesProjects && !!projectsQ.data?.length && (
+              <div className="grid gap-2 md:col-span-2">
+                <Label htmlFor="projectId">Project</Label>
+                <NativeSelect id="projectId" {...form.register('projectId')}>
+                  <option value="">None</option>
+                  {projectsQ.data
+                    .filter((p) => p.status !== 'cancelled' || p.id === values.projectId)
+                    .map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.number} · {p.name}
+                      </option>
+                    ))}
+                </NativeSelect>
+                <p className="text-muted-foreground text-sm">{kind === 'bill' ? 'Counts as a cost of the project.' : 'Counts as the project’s revenue.'}</p>
+              </div>
+            )}
             <div className="flex items-center gap-2 md:col-span-2 lg:col-span-4">
               <Controller
                 control={form.control}
@@ -251,6 +323,30 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
           {lines.fields.map((field, i) => (
             <Card key={field.id} className="gap-0 py-4">
               <CardContent className="grid gap-3 px-4 md:grid-cols-12">
+                {usesItems && itemsQ.data && (
+                  <div className="grid gap-1.5 md:col-span-12">
+                    <Label htmlFor={`l${i}-item`} className="text-muted-foreground text-xs">
+                      Item
+                    </Label>
+                    <NativeSelect id={`l${i}-item`} {...form.register(`lines.${i}.itemId`, { onChange: (e) => pickItem(i, e.target.value) })}>
+                      <option value="">No item (type a description)</option>
+                      {itemsQ.data
+                        ?.filter((it) => it.active)
+                        .map((it) => (
+                          <option key={it.id} value={it.id}>
+                            {it.sku} · {it.name}
+                            {it.kind === 'stock' ? ` (${it.onHand} ${it.unit.code} on hand)` : ''}
+                          </option>
+                        ))}
+                    </NativeSelect>
+                  </div>
+                )}
+                {values.lines[i]?.soLineId && (
+                  <p className="text-muted-foreground text-xs md:col-span-12">From the sales order. The goods left on its delivery, so posting books only the sale.</p>
+                )}
+                {values.lines[i]?.poLineId && (
+                  <p className="text-muted-foreground text-xs md:col-span-12">From the purchase order. Goods already received clear “Goods Received Not Invoiced”.</p>
+                )}
                 <div className="grid gap-1.5 md:col-span-5">
                   <Label htmlFor={`l${i}-description`} className="text-muted-foreground text-xs">
                     Description
@@ -295,7 +391,13 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
                   <Label htmlFor={`l${i}-account`} className="text-muted-foreground text-xs">
                     Account
                   </Label>
-                  <NativeSelect id={`l${i}-account`} aria-invalid={!!lineError(i, 'accountId')} {...form.register(`lines.${i}.accountId`)}>
+{values.lines[i]?.poLineId && grniAccount && values.lines[i]?.accountId === grniAccount.id ? (
+                    // set by the purchase order: the goods were put on the books when they arrived
+                    <p id={`l${i}-account`} className="bg-muted text-muted-foreground flex h-9 items-center rounded-md px-3 text-sm">
+                      Goods received (from PO)
+                    </p>
+                  ) : (
+                                      <NativeSelect id={`l${i}-account`} aria-invalid={!!lineError(i, 'accountId')} {...form.register(`lines.${i}.accountId`)}>
                     <option value="">Choose…</option>
                     {lineAccounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -303,6 +405,7 @@ function DocumentForm({ kind, existing, accounts, taxCodes }: { kind: DocKind; e
                       </option>
                     ))}
                   </NativeSelect>
+                  )}
                   {lineError(i, 'accountId') && <p className="text-destructive text-xs">{lineError(i, 'accountId')}</p>}
                 </div>
                 {kind === 'bill' && (

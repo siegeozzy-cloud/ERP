@@ -185,7 +185,7 @@ export default async function authRoutes(app: FastifyInstance) {
       throw new HttpError(403, 'email-unverified', `Confirm your email first. ${where}`, 'email')
     }
     const token = await startSession(reply, user.id, input.remember)
-    return { ...sessionOf(user), token } satisfies SignInResponse
+    return { ...(await sessionOf(user)), token } satisfies SignInResponse
   })
 
   app.post('/signout', async (req, reply) => {
@@ -194,5 +194,5 @@ export default async function authRoutes(app: FastifyInstance) {
   })
 
   /** The current session, or null. Not a 401, so a signed-out page load doesn't log an error. */
-  app.get('/session', async (req) => ({ session: req.auth ? sessionOf(req.auth.user) : null }))
+  app.get('/session', async (req) => ({ session: req.auth ? await sessionOf(req.auth.user) : null }))
 }

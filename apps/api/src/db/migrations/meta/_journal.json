@@ -43,6 +43,97 @@
       "when": 1794741919864,
       "tag": "0005_memberships_role_id",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794743671112,
+      "tag": "0006_push_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794745021243,
+      "tag": "0007_inventory_purchasing",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794745048495,
+      "tag": "0008_inventory_backfill_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794754654453,
+      "tag": "0009_crm_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794754698206,
+      "tag": "0010_crm_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794755665238,
+      "tag": "0011_closed_by_hand",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794757982511,
+      "tag": "0012_hr_payroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794757983097,
+      "tag": "0013_hr_seed",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794799048906,
+      "tag": "0014_demo_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794800476375,
+      "tag": "0015_demo_ready",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794801439245,
+      "tag": "0016_manufacturing",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794803330295,
+      "tag": "0017_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794805356376,
+      "tag": "0018_niche_packs",
+      "breakpoints": true
     }
   ]
 }

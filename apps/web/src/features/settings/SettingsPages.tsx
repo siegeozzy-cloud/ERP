@@ -1,4 +1,5 @@
 import {
+  templateByKey,
   JOIN_CODE_LIFETIMES,
   MODULE_SLUGS,
   PERMISSIONS,
@@ -47,6 +48,7 @@ const TABS: { to: string; label: string; permission?: Permission }[] = [
   { to: '/w/$workspaceId/settings/join-codes', label: 'Join codes', permission: 'members.invite' },
   { to: '/w/$workspaceId/settings/roles', label: 'Roles', permission: 'members.view' },
   { to: '/w/$workspaceId/settings/audit', label: 'Audit log', permission: 'audit.view' },
+  { to: '/w/$workspaceId/settings/import', label: 'Import' },
 ]
 
 export function SettingsLayout() {
@@ -106,8 +108,10 @@ export function WorkspaceSettingsPage() {
       dpoName: workspace.dpoName ?? '',
       dpoEmail: workspace.dpoEmail ?? '',
       modules: workspace.modules,
+      licences: workspace.licences ?? {},
     },
   })
+  const licences = templateByKey(workspace.template)?.licences ?? []
   const { errors, isSubmitting, isDirty } = form.formState
   const [saved, setSaved] = useState(false)
 
@@ -131,6 +135,39 @@ export function WorkspaceSettingsPage() {
       <form onSubmit={onSubmit} noValidate>
         <fieldset disabled={!editable} className="grid gap-6">
           <FormError message={errors.root?.message} />
+          {licences.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Licences and permits</CardTitle>
+                <CardDescription>What your industry needs on file. They print on your invoices, and the dashboard warns you 60 days before one expires.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-5 sm:grid-cols-2">
+                {licences.flatMap((l) => [
+                  <Field key={l.key} id={`lic-${l.key}`} label={l.label} hint={l.hint} error={(errors.licences as unknown as { message?: string })?.message}>
+                    {l.options ? (
+                      <NativeSelect id={`lic-${l.key}`} {...form.register(`licences.${l.key}`)}>
+                        <option value="">—</option>
+                        {l.options.map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    ) : (
+                      <Input id={`lic-${l.key}`} {...form.register(`licences.${l.key}`)} />
+                    )}
+                  </Field>,
+                  ...(l.expires
+                    ? [
+                        <Field key={`${l.key}_expires`} id={`lic-${l.key}-exp`} label="Valid until">
+                          <Input id={`lic-${l.key}-exp`} type="date" {...form.register(`licences.${l.key}_expires`)} />
+                        </Field>,
+                      ]
+                    : []),
+                ])}
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader>
               <CardTitle>Business</CardTitle>

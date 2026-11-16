@@ -73,6 +73,8 @@ export const WorkspaceUpdate = z.object({
   fiscalYearStartMonth: z.coerce.number().int().min(1).max(12),
   ...dpoFields,
   modules: z.array(z.enum(MODULE_SLUGS)).refine((m) => m.includes('finance'), 'Finance is always on.'),
+  /** The template's licences and permits (FDA LTO, PCAB…), by key. Left out: unchanged. */
+  licences: z.record(z.string().max(40), z.string().trim().max(300)).optional(),
 })
 export type WorkspaceUpdate = z.input<typeof WorkspaceUpdate>
 
@@ -92,6 +94,8 @@ export type Workspace = {
   modules: ModuleSlug[]
   dpoName: string | null
   dpoEmail: string | null
+  /** Licences and permits (shared/templates.ts `licences`), by key. */
+  licences: Record<string, string>
   /** The signed-in person's role here, and what it lets them do. */
   role: { id: string; key: string | null; name: string }
   permissions: Permission[]

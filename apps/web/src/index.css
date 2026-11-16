@@ -30,6 +30,9 @@
   --sidebar-accent: oklch(0.95 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
+  /* charts (Phase 9): categorical slots 1–2, validated against the card surface (dataviz palette) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
 }
 
 .dark {
@@ -57,6 +60,8 @@
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
+  --series-1: #3987e5;
+  --series-2: #d95926;
 }
 
 @theme inline {

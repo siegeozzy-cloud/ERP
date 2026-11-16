@@ -1,3 +1,4 @@
+import { checkPriceList } from '../crm/prices.ts'
 import { AccountInput, AccountUpdate, ContactInput, type Account, type Contact, type TaxCode } from '@erp/shared'
 import { and, asc, eq, ilike, or } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
@@ -27,6 +28,9 @@ export const contactOut = (c: typeof contacts.$inferSelect): Contact => ({
   isCustomer: c.isCustomer,
   isSupplier: c.isSupplier,
   defaultEwtCodeId: c.defaultEwtCodeId,
+  paymentTermsDays: c.paymentTermsDays,
+  priceListId: c.priceListId,
+  creditLimit: c.creditLimit,
 })
 
 const taxOut = (t: typeof taxCodes.$inferSelect): TaxCode => ({ id: t.id, kind: t.kind, code: t.code, name: t.name, rateBp: t.rateBp, atc: t.atc, effectiveFrom: t.effectiveFrom, active: t.active })
@@ -124,6 +128,7 @@ export default async function setupRoutes(app: FastifyInstance) {
 
   app.post('/contacts', needs('finance.edit'), async (req, reply) => {
     const input = parse(ContactInput, req.body)
+    await checkPriceList(db, workspaceOf(req).id, input.priceListId)
     const ws = workspaceOf(req)
     await checkEwtCode(ws.id, input.defaultEwtCodeId)
     const row = await db.transaction(async (tx) => {
@@ -137,6 +142,7 @@ export default async function setupRoutes(app: FastifyInstance) {
   app.put('/contacts/:id', needs('finance.edit'), async (req) => {
     const id = idOf(req.params, 'contact')
     const input = parse(ContactInput, req.body)
+    await checkPriceList(db, workspaceOf(req).id, input.priceListId)
     const ws = workspaceOf(req)
     await checkEwtCode(ws.id, input.defaultEwtCodeId)
     const row = await db.transaction(async (tx) => {
@@ -151,14 +157,21 @@ export default async function setupRoutes(app: FastifyInstance) {
   })
 }
 
-/** Blank optional fields are stored as NULL, so an edit can clear them. */
+/**
+ * Blank optional fields are stored as NULL, so an edit can clear them. Payment terms and credit
+ * limit are kept as they are when the form doesn't send them (Finance's contact form doesn't).
+ */
 function nullify(input: z.output<typeof ContactInput>) {
+  const { paymentTermsDays, creditLimit, priceListId, ...rest } = input
   return {
-    ...input,
+    ...rest,
     tin: input.tin ?? null,
     address: input.address ?? null,
     email: input.email ?? null,
     phone: input.phone ?? null,
     defaultEwtCodeId: input.defaultEwtCodeId ?? null,
+    ...(paymentTermsDays !== undefined ? { paymentTermsDays } : {}),
+    ...(creditLimit !== undefined ? { creditLimit } : {}),
+    ...(priceListId !== undefined ? { priceListId } : {}),
   }
 }

@@ -1,7 +1,7 @@
 import { computeLine, computeTotals, DocumentLineInput, VAT_TREATMENT_LABELS, type DocumentLine, type DocumentTotals, type Payment } from '@erp/shared'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { z } from 'zod'
-import { accounts, contacts, documentLines, payments, taxCodes, type WorkspaceRow } from '../../db/schema.ts'
+import { accounts, contacts, documentLines, items, payments, purchaseOrderLines, purchaseOrders, salesLines, salesOrders, taxCodes, type WorkspaceRow } from '../../db/schema.ts'
 import type { Executor } from '../../db/types.ts'
 import { HttpError } from '../../lib/errors.ts'
 import { taxRateOn, VAT_CODE, type PostingLine } from './ledger.ts'
@@ -26,6 +26,9 @@ export type PreparedLine = {
   ewtCodeId: string | null
   ewtRateBp: number | null
   atc: string | null
+  itemId: string | null
+  poLineId: string | null
+  soLineId: string | null
   gross: number
   net: number
   vatAmount: number
@@ -39,8 +42,8 @@ export async function prepareDocument(
   db: Executor,
   ws: WorkspaceRow,
   kind: DocKind,
-  input: { contactId: string; date: string; pricesIncludeVat: boolean; lines: LineInput[] },
-): Promise<{ contact: typeof contacts.$inferSelect; lines: PreparedLine[]; totals: DocumentTotals }> {
+  input: { contactId: string; date: string; pricesIncludeVat: boolean; lines: LineInput[]; warehouseId?: string | null },
+): Promise<{ contact: typeof contacts.$inferSelect; lines: PreparedLine[]; totals: DocumentTotals; items: Map<string, typeof items.$inferSelect> }> {
   const contactField = kind === 'invoice' ? 'customerId' : 'supplierId'
   const [contact] = await db.select().from(contacts).where(and(eq(contacts.id, input.contactId), eq(contacts.workspaceId, ws.id)))
   if (!contact || !(kind === 'invoice' ? contact.isCustomer : contact.isSupplier)) {
@@ -60,12 +63,59 @@ export async function prepareDocument(
     : []
   const ewtById = new Map(ewtRows.map((t) => [t.id, t]))
 
+  // items on lines (Phase 3)
+  const itemIds = [...new Set(input.lines.flatMap((l) => (l.itemId ? [l.itemId] : [])))]
+  const itemRows = itemIds.length ? await db.select().from(items).where(and(eq(items.workspaceId, ws.id), inArray(items.id, itemIds))) : []
+  const itemById = new Map(itemRows.map((i) => [i.id, i]))
+  const poLineIds = [...new Set(input.lines.flatMap((l) => (l.poLineId ? [l.poLineId] : [])))]
+  const poLineRows = poLineIds.length
+    ? await db
+        .select({ line: purchaseOrderLines, supplierId: purchaseOrders.supplierId })
+        .from(purchaseOrderLines)
+        .innerJoin(purchaseOrders, eq(purchaseOrders.id, purchaseOrderLines.poId))
+        .where(and(eq(purchaseOrderLines.workspaceId, ws.id), inArray(purchaseOrderLines.id, poLineIds)))
+    : []
+  const poLineById = new Map(poLineRows.map((r) => [r.line.id, r]))
+  // sales order lines (Phase 4): their goods already left on a delivery
+  const soLineIds = [...new Set(input.lines.flatMap((l) => (l.soLineId ? [l.soLineId] : [])))]
+  const soLineRows = soLineIds.length
+    ? await db
+        .select({ line: salesLines, customerId: salesOrders.customerId })
+        .from(salesLines)
+        .innerJoin(salesOrders, eq(salesOrders.id, salesLines.orderId))
+        .where(and(eq(salesLines.workspaceId, ws.id), inArray(salesLines.id, soLineIds)))
+    : []
+  const soLineById = new Map(soLineRows.map((r) => [r.line.id, r]))
+  const grniId = poLineIds.length ? (await db.select({ id: accounts.id }).from(accounts).where(and(eq(accounts.workspaceId, ws.id), eq(accounts.systemKey, 'grni'))))[0]?.id : undefined
+  const hasStock = input.lines.some((l) => l.itemId && !l.soLineId && itemById.get(l.itemId)?.kind === 'stock')
+  if (kind === 'invoice' && hasStock && !input.warehouseId) throw new HttpError(400, 'invalid', 'Choose the warehouse the goods leave from.', 'warehouseId')
+
   const needsVat = input.lines.some((l) => l.vat === 'vatable')
   const vatRateBp = needsVat ? (await taxRateOn(db, ws.id, VAT_CODE, input.date)).rateBp : 0
 
   const lines: PreparedLine[] = []
   for (const [i, l] of input.lines.entries()) {
-    const account = accountById.get(l.accountId)
+    const item = l.itemId ? itemById.get(l.itemId) : undefined
+    if (l.itemId && !item) throw lineError(i, 'that item isn’t in this workspace.')
+    if (item && !item.active) throw lineError(i, `${item.name} is turned off.`)
+    let accountId = l.accountId
+    const poLine = l.poLineId ? poLineById.get(l.poLineId) : undefined
+    if (l.poLineId) {
+      if (kind !== 'bill' || !poLine) throw lineError(i, 'that purchase order line isn’t in this workspace.')
+      if (poLine.supplierId !== input.contactId) throw lineError(i, 'that purchase order is from a different supplier.')
+      if (poLine.line.itemId !== l.itemId) throw lineError(i, 'the item doesn’t match the purchase order line.')
+      // stock that came in through a PO was put on the books against GRNI; the bill clears it
+      if (item?.kind === 'stock') accountId = grniId!
+    } else if (kind === 'bill' && item?.kind === 'stock') {
+      throw lineError(i, `${item.name} is a stock item: order it on a purchase order and receive it into a warehouse, then bill from the order.`)
+    }
+    if (l.soLineId) {
+      const soLine = soLineById.get(l.soLineId)
+      if (kind !== 'invoice' || !soLine) throw lineError(i, 'that sales order line isn’t in this workspace.')
+      if (soLine.customerId !== input.contactId) throw lineError(i, 'that sales order is for a different customer.')
+      if (soLine.line.itemId !== l.itemId) throw lineError(i, 'the item doesn’t match the sales order line.')
+    }
+    const account = accountId === grniId && poLine ? { id: accountId, type: 'expense' as const, active: true } : accountById.get(accountId)
     if (!account) throw lineError(i, 'choose an account.')
     if (!account.active) throw lineError(i, 'that account is turned off.')
     if (kind === 'invoice' && account.type !== 'income') throw lineError(i, 'sales go to an income account.')
@@ -95,18 +145,21 @@ export async function prepareDocument(
       unitPrice: l.unitPrice,
       vat: l.vat,
       vatRateBp: l.vat === 'vatable' ? vatRateBp : 0,
-      accountId: l.accountId,
+      accountId,
       ewtCodeId: ewt?.id ?? null,
       ewtRateBp: ewt?.rateBp ?? null,
       atc: ewt?.atc ?? null,
+      itemId: l.itemId ?? null,
+      poLineId: l.poLineId ?? null,
+      soLineId: l.soLineId ?? null,
       ...amounts,
     })
   }
-  return { contact, lines, totals: computeTotals(lines) }
+  return { contact, lines, totals: computeTotals(lines), items: itemById }
 }
 
 /** Adds up amounts per account, so a 40-line invoice doesn't make 40 ledger lines. */
-function byAccount(lines: PreparedLine[], amount: (l: PreparedLine) => number) {
+function byAccount<L extends PreparedLine>(lines: L[], amount: (l: L) => number) {
   const sums = new Map<string, number>()
   for (const l of lines) sums.set(l.accountId, (sums.get(l.accountId) ?? 0) + amount(l))
   return [...sums.entries()]
@@ -124,9 +177,9 @@ export function postingLines(
   kind: DocKind,
   ws: WorkspaceRow,
   contactId: string,
-  lines: PreparedLine[],
+  lines: (PreparedLine & { grniValue?: number })[],
   totals: DocumentTotals,
-  system: { ar: string; ap: string; outputVat: string; inputVat: string; ewtPayable: string },
+  system: { ar: string; ap: string; outputVat: string; inputVat: string; ewtPayable: string; priceVariance?: string },
 ): PostingLine[] {
   if (kind === 'invoice') {
     return [
@@ -136,8 +189,14 @@ export function postingLines(
     ]
   }
   const claimsInputVat = ws.vatStatus === 'vat'
+  const cost = (l: PreparedLine) => (claimsInputVat ? l.net : l.gross)
+  // lines for goods received on a PO clear GRNI at the value they came in at; a different price
+  // on the bill is purchase price variance
+  const viaGrni = lines.filter((l) => l.grniValue !== undefined)
+  const variance = viaGrni.reduce((s, l) => s + cost(l) - l.grniValue!, 0)
   return [
-    ...byAccount(lines, (l) => (claimsInputVat ? l.net : l.gross)).map(([accountId, debit]) => ({ accountId, debit, contactId })),
+    ...byAccount(lines, (l) => (l.grniValue !== undefined ? l.grniValue : cost(l))).map(([accountId, debit]) => ({ accountId, debit, contactId })),
+    ...(variance > 0 ? [{ accountId: system.priceVariance!, debit: variance }] : variance < 0 ? [{ accountId: system.priceVariance!, credit: -variance }] : []),
     ...(claimsInputVat ? [{ accountId: system.inputVat, debit: totals.vatAmount }] : []),
     { accountId: system.ewtPayable, credit: totals.ewtAmount, contactId },
     { accountId: system.ap, credit: totals.amountDue, contactId },
@@ -155,6 +214,9 @@ export const lineOut = (l: typeof documentLines.$inferSelect): DocumentLine => (
   ewtCodeId: l.ewtCodeId,
   ewtRateBp: l.ewtRateBp,
   atc: l.atc,
+  itemId: l.itemId,
+  poLineId: l.poLineId,
+  soLineId: l.soLineId,
   gross: l.gross,
   net: l.net,
   vatAmount: l.vatAmount,

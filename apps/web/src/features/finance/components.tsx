@@ -95,7 +95,9 @@ export function FinanceTabs() {
 /** Downloads rows as a CSV file, for opening in a spreadsheet (and for BIR's own tools). */
 export function downloadCsv(filename: string, header: string[], rows: (string | number | null)[][]) {
   const cell = (v: string | number | null) => {
-    const s = v === null ? '' : String(v)
+    let s = v === null ? '' : String(v)
+    // a text cell starting with = + @ (or - not followed by a number) would run as a formula in Excel
+    if (typeof v === 'string' && (/^[=+@\t\r]/.test(s) || /^-(?![\d.])/.test(s))) s = `'${s}`
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
   const csv = [header, ...rows].map((r) => r.map(cell).join(',')).join('\r\n')

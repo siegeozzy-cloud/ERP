@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
-import { Building2, Check, ChevronsUpDown, KeyRound, LayoutDashboard, LogOut, Menu, Plus, Settings } from 'lucide-react'
+import { Building2, Check, ChevronsUpDown, Clock, KeyRound, LayoutDashboard, LogOut, Menu, Plus, Settings } from 'lucide-react'
 import { useState } from 'react'
 import { Brand } from '@/components/brand'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { useSignOut, useUser } from '@/features/auth/session'
+import { DemoBanner } from '@/features/demo/demo'
 import { useCan, useWorkspace, workspacesQuery } from '@/features/workspaces/queries'
 import { MODULES } from './modules'
 
@@ -74,7 +75,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { id: workspaceId, modules } = useWorkspace()
   const can = useCan()
   // only what this workspace has turned on, and Finance only for roles that may see it
-  const shown = MODULES.filter((m) => (modules as string[]).includes(m.slug) && (m.slug !== 'finance' || can('finance.view')))
+  const shown = MODULES.filter((m) => (modules as string[]).includes(m.slug) && (m.slug !== 'finance' || can('finance.view')) && (m.slug !== 'inventory' || can('inventory.view')) && (m.slug !== 'crm' || can('crm.view')))
+  const hr = (modules as string[]).includes('hr')
   return (
     <div className="flex h-full flex-col gap-6 p-4">
       <Brand className="px-2 pt-1" />
@@ -84,19 +86,51 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <LayoutDashboard className="size-4 shrink-0" />
           Dashboard
         </Link>
-        {shown.map(({ slug, label, icon: Icon, ready }) =>
+        {shown.map(({ slug, label, icon: Icon }) =>
           slug === 'finance' ? (
             <Link key={slug} to="/w/$workspaceId/finance" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
               <Icon className="size-4 shrink-0" />
               {label}
             </Link>
-          ) : (
-            <Link key={slug} to="/w/$workspaceId/m/$module" params={{ workspaceId, module: slug }} onClick={onNavigate} className={navLink} activeProps={active}>
+          ) : slug === 'inventory' ? (
+            <Link key={slug} to="/w/$workspaceId/inventory" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
               <Icon className="size-4 shrink-0" />
-              <span className="flex-1">{label}</span>
-              {!ready && <span className="text-muted-foreground text-xs font-normal">Soon</span>}
+              {label}
             </Link>
-          ),
+          ) : slug === 'crm' ? (
+            <Link key={slug} to="/w/$workspaceId/crm" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
+              <Icon className="size-4 shrink-0" />
+              {label}
+            </Link>
+          ) : slug === 'projects' ? (
+            can('projects.view') && (
+              <Link key={slug} to="/w/$workspaceId/projects" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
+                <Icon className="size-4 shrink-0" />
+                {label}
+              </Link>
+            )
+          ) : slug === 'manufacturing' ? (
+            can('manufacturing.view') && (
+              <Link key={slug} to="/w/$workspaceId/manufacturing" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
+                <Icon className="size-4 shrink-0" />
+                {label}
+              </Link>
+            )
+          ) : slug === 'hr' ? (
+            can('hr.view') && (
+              <Link key={slug} to="/w/$workspaceId/hr" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
+                <Icon className="size-4 shrink-0" />
+                {label}
+              </Link>
+            )
+          ) : // every module has its own pages now; a new one adds its branch above
+          null,
+        )}
+        {hr && (
+          <Link to="/w/$workspaceId/me" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
+            <Clock className="size-4 shrink-0" />
+            My time & pay
+          </Link>
         )}
         <Link to="/w/$workspaceId/settings" params={{ workspaceId }} onClick={onNavigate} className={navLink} activeProps={active}>
           <Settings className="size-4 shrink-0" />
@@ -144,6 +178,7 @@ function usePageTitle() {
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const segment = pathname.split('/')[3] === 'm' ? pathname.split('/')[4] : pathname.split('/')[3]
   if (segment === 'settings') return 'Settings'
+  if (segment === 'me') return 'My time & pay'
   return MODULES.find((m) => m.slug === segment)?.label ?? 'Dashboard'
 }
 
@@ -160,6 +195,7 @@ export function AppShell() {
         <SidebarContent />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
+        <DemoBanner />
         <header className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-0 z-30 flex h-14 items-center gap-2 border-b px-4 backdrop-blur md:px-8 print:hidden">
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
             <SheetTrigger asChild>

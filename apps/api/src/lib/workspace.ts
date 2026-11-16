@@ -1,4 +1,4 @@
-import type { Permission } from '@erp/shared'
+import type { ModuleSlug, Permission } from '@erp/shared'
 import { and, eq } from 'drizzle-orm'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
@@ -31,6 +31,8 @@ declare module 'fastify' {
   }
   interface FastifyContextConfig {
     permission?: RoutePermission
+    /** The module the route belongs to; refused when the workspace has it turned off. */
+    module?: ModuleSlug
   }
 }
 
@@ -49,6 +51,11 @@ async function loadWorkspace(req: FastifyRequest) {
     .where(and(eq(memberships.workspaceId, params.data.workspaceId), eq(memberships.userId, req.auth!.user.id)))
   if (!row) throw notFound()
   req.workspace = { ...row.workspace, role: row.role, permissions: new Set(row.role.permissions as Permission[]) }
+
+  const module = req.routeOptions.config.module
+  if (module && !row.workspace.modules.includes(module)) {
+    throw new HttpError(403, 'module-off', `${module[0]!.toUpperCase()}${module.slice(1)} is turned off for this workspace. An owner or admin can turn it on in Settings.`)
+  }
 
   const needed = req.routeOptions.config.permission
   if (needed && needed !== 'member' && !req.workspace.permissions.has(needed)) {
@@ -71,8 +78,8 @@ export async function workspaceScope(app: FastifyInstance, routes: (app: Fastify
   )
 }
 
-/** Route options naming the permission a route needs. */
-export const needs = (permission: RoutePermission) => ({ config: { permission } })
+/** Route options naming the permission a route needs (and the module it belongs to). */
+export const needs = (permission: RoutePermission, module?: ModuleSlug) => ({ config: { permission, module } })
 
 /** The current workspace (inside workspaceScope). */
 export const workspaceOf = (req: FastifyRequest) => req.workspace!

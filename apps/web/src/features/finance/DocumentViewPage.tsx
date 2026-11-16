@@ -1,3 +1,4 @@
+import { HazardNote, LicenceLines } from '@/features/inventory/niche'
 import { centavosToInput, formatPeso, formatRate, parsePeso, type Bill, type Invoice, type Payment } from '@erp/shared'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
@@ -133,6 +134,7 @@ function DocumentView({ kind, doc }: { kind: DocKind; doc: Doc }) {
               {kind === 'invoice' ? (nonVatSeller ? 'Non-VAT Reg.' : 'VAT Reg.') : ''} TIN {seller.tin ?? 'not on file'}
             </p>
             {seller.address && <p className="text-muted-foreground max-w-xs text-sm whitespace-pre-line">{seller.address}</p>}
+            {kind === 'invoice' && <LicenceLines />}
           </div>
           <div className="space-y-1 text-right">
             <p className="text-sm font-semibold tracking-widest uppercase">{kind === 'invoice' ? 'Sales Invoice' : 'Bill'}</p>
@@ -165,6 +167,7 @@ function DocumentView({ kind, doc }: { kind: DocKind; doc: Doc }) {
               <TableRow key={l.id}>
                 <TableCell className="min-w-48 pl-0">
                   {l.description}
+                  {kind === 'invoice' && <HazardNote itemId={l.itemId} />}
                   {l.vat !== 'vatable' && <span className="text-muted-foreground ml-2 text-xs">({l.vat === 'zero_rated' ? 'zero-rated' : l.vat === 'exempt' ? 'VAT-exempt' : 'non-VAT'})</span>}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{l.quantity}</TableCell>

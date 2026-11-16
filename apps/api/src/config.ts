@@ -11,7 +11,7 @@ const optional = z.preprocess(blankIsUnset, z.string().optional())
  * Values pasted into hosting dashboards arrive with stray quotes or spaces, or with the setting's name
  * still in front ("DATABASE_URL=postgres://…"). Those are tidied away.
  */
-const pasted = (name: string) =>
+const pasted = (name: string, whenMissing = 'is missing.') =>
   z.preprocess((v) => {
     if (typeof v !== 'string') return v
     const cleaned = v
@@ -21,7 +21,7 @@ const pasted = (name: string) =>
       .replace(/^(['"])([\s\S]*)\1$/, '$2')
       .trim()
     return cleaned === '' ? undefined : cleaned
-  }, z.string())
+  }, z.string(`${name} ${whenMissing}`))
 
 const pastedOptional = <T extends z.ZodType>(schema: T) => z.preprocess(blankIsUnset, schema.optional())
 
@@ -42,7 +42,7 @@ const Env = z.object({
   DATABASE_URL: pasted('DATABASE_URL')
     .refine((v) => !hasPlaceholders(v), 'DATABASE_URL still has <placeholders> in it — copy the real connection string from your database host.')
     .refine((v) => /^postgres(ql)?:\/\//.test(v), 'DATABASE_URL must start with postgres:// — paste only the connection string.'),
-  ENCRYPTION_KEY: pasted('ENCRYPTION_KEY').refine(
+  ENCRYPTION_KEY: pasted('ENCRYPTION_KEY', 'is empty. Make one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"').refine(
     (v) => Buffer.from(v, 'base64').length === 32,
     'ENCRYPTION_KEY must be 32 random bytes, base64 (see .env.example)',
   ),
@@ -53,6 +53,12 @@ const Env = z.object({
       .refine((v) => v.startsWith('xkeysib-'), 'BREVO_API_KEY must start with xkeysib- (an API key, not an SMTP key).'),
   ),
   SMTP_URL: optional,
+  /** "Try the demo" (features/demo). `off` hides the button's endpoint. */
+  DEMO: z.enum(['on', 'off']).default('on'),
+  /** Demo businesses kept built and waiting, so a visitor doesn't wait for one. */
+  DEMO_SPARES: z.coerce.number().int().min(0).max(5).default(process.env.NODE_ENV === 'test' ? 0 : 1),
+  /** At most this many demos at once: each is a whole workspace, and free databases are small. */
+  DEMO_MAX_ACTIVE: z.coerce.number().int().min(1).max(1000).default(40),
   MAIL_FROM: z.preprocess(blankIsUnset, pasted('MAIL_FROM').default(`${APP_NAME} <no-reply@erp.local>`)),
 })
 

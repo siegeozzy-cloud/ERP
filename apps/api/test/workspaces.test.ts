@@ -84,7 +84,7 @@ test('a workspace made from a template gets its modules, accounts and roles', as
   assert.ok(accounts.some((a) => a.code === '1205' && a.name === 'Merchandise Inventory'))
 
   const roles = (await alice('GET', w('/roles'))).body.roles as Role[]
-  assert.deepEqual(roles.map((x) => x.name), ['Owner', 'Admin', 'Accountant', 'Bookkeeper', 'Viewer'])
+  assert.deepEqual(roles.map((x) => x.name), ['Owner', 'Admin', 'Accountant', 'Bookkeeper', 'HR & payroll', 'Production staff', 'Project manager', 'Sales', 'Viewer', 'Warehouse staff'])
   for (const x of roles) roleId[x.name] = x.id
   assert.equal(roles[0]!.memberCount, 1)
 
@@ -252,4 +252,13 @@ test('leaving a workspace', async () => {
   assert.equal((await bob('GET', w('/invoices'))).status, 404)
   const mine = (await bob('GET', '/api/workspaces')).body.workspaces as { id: string }[]
   assert.ok(!mine.some((x) => x.id === ws))
+})
+
+test('every template makes a workspace (its accounts don’t clash with the standard chart)', async () => {
+  const { TEMPLATES } = await import('@erp/shared')
+  const u = as((await makeUser('Tess')).token)
+  for (const t of TEMPLATES) {
+    const r = await u('POST', '/api/workspaces', { template: t.key, name: `Template ${t.key}`, tin: '123-456-789-00000', vatStatus: 'vat', street: 'Manila' })
+    assert.equal(r.status, 201, `${t.key}: ${JSON.stringify(r.body)}`)
+  }
 })

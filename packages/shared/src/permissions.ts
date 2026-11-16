@@ -13,6 +13,19 @@ export const PERMISSIONS = {
   'finance.view': { group: 'Finance', label: 'See invoices, bills, the journal and reports' },
   'finance.edit': { group: 'Finance', label: 'Create and edit drafts, contacts and accounts' },
   'finance.post': { group: 'Finance', label: 'Post, void, record payments and reverse entries' },
+  'inventory.view': { group: 'Inventory', label: 'See items, stock levels and purchase orders' },
+  'inventory.manage': { group: 'Inventory', label: 'Edit items and warehouses, receive goods, adjust and move stock' },
+  'purchasing.manage': { group: 'Inventory', label: 'Create, issue and cancel purchase orders' },
+  'crm.view': { group: 'Sales & CRM', label: 'See customers, leads, quotes and sales orders' },
+  'crm.manage': { group: 'Sales & CRM', label: 'Add customers, work leads, log activities and make quotes' },
+  'sales.manage': { group: 'Sales & CRM', label: 'Create, confirm and cancel sales orders' },
+  'hr.view': { group: 'HR & payroll', label: 'See employees, attendance and leave' },
+  'hr.manage': { group: 'HR & payroll', label: 'Add and edit employees, fix attendance, approve leave, set holidays' },
+  'payroll.run': { group: 'HR & payroll', label: 'See pay, run and post payroll, and file government reports' },
+  'manufacturing.view': { group: 'Manufacturing', label: 'See bills of materials, work orders and the production plan' },
+  'manufacturing.manage': { group: 'Manufacturing', label: 'Edit bills of materials and work centres; release, start and complete work orders' },
+  'projects.view': { group: 'Projects', label: 'See projects, their plans, timesheets and costs' },
+  'projects.manage': { group: 'Projects', label: 'Plan projects, assign tasks, log anyone’s time, take materials, bill milestones and hours' },
 } as const
 
 export type Permission = keyof typeof PERMISSIONS
@@ -30,10 +43,25 @@ export const DEFAULT_ROLES: { key: string | null; name: string; description: str
     key: null,
     name: 'Accountant',
     description: 'Runs the books: posts, voids and files reports.',
-    permissions: ['members.view', 'audit.view', 'finance.view', 'finance.edit', 'finance.post'],
+    permissions: ['members.view', 'audit.view', 'finance.view', 'finance.edit', 'finance.post', 'inventory.view', 'crm.view', 'hr.view', 'manufacturing.view', 'projects.view'],
   },
-  { key: null, name: 'Bookkeeper', description: 'Prepares drafts for an accountant to post.', permissions: ['members.view', 'finance.view', 'finance.edit'] },
-  { key: null, name: 'Viewer', description: 'Can look but not change anything.', permissions: ['members.view', 'finance.view'] },
+  { key: null, name: 'Bookkeeper', description: 'Prepares drafts for an accountant to post.', permissions: ['members.view', 'finance.view', 'finance.edit', 'inventory.view', 'crm.view'] },
+  { key: null, name: 'Viewer', description: 'Can look but not change anything.', permissions: ['members.view', 'finance.view', 'inventory.view', 'crm.view', 'manufacturing.view', 'projects.view'] },
+  { key: null, name: 'Warehouse staff', description: 'Receives goods, counts and moves stock.', permissions: ['members.view', 'inventory.view', 'inventory.manage', 'crm.view', 'manufacturing.view'] },
+  { key: null, name: 'Sales', description: 'Works leads, makes quotes and takes orders.', permissions: ['members.view', 'crm.view', 'crm.manage', 'sales.manage'] },
+  {
+    key: null,
+    name: 'Production staff',
+    description: 'Runs work orders: issues materials, records output and quality checks.',
+    permissions: ['members.view', 'inventory.view', 'manufacturing.view', 'manufacturing.manage'],
+  },
+  {
+    key: null,
+    name: 'Project manager',
+    description: 'Plans projects, assigns work, tracks time and costs, and bills milestones.',
+    permissions: ['members.view', 'crm.view', 'inventory.view', 'projects.view', 'projects.manage'],
+  },
+  { key: null, name: 'HR & payroll', description: 'Keeps employee records, approves leave and runs payroll.', permissions: ['members.view', 'members.invite', 'hr.view', 'hr.manage', 'payroll.run'] },
 ]
 
 const roleName = z

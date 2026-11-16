@@ -94,6 +94,11 @@ export const ContactInput = z
     isSupplier: z.boolean().default(false),
     /** The withholding code usually applied to this supplier's bills. */
     defaultEwtCodeId: z.uuid().nullish(),
+    /** Customers (Phase 4): days to pay, and the most they may owe. Left out: unchanged; null: none. */
+    paymentTermsDays: z.number().int('Enter whole days.').min(0, 'Days can’t be negative.').max(365, 'Use 365 days or fewer.').nullish(),
+    creditLimit: z.number().int('Enter the limit to the centavo.').min(0, 'The limit can’t be negative.').max(1_000_000_000_000).nullish(),
+    /** Left out: unchanged; null: none. */
+    priceListId: z.uuid().nullish(),
   })
   .refine((c) => c.isCustomer || c.isSupplier, { message: 'Mark this contact as a customer, a supplier, or both.', path: ['isCustomer'] })
 export type ContactInput = z.input<typeof ContactInput>
@@ -108,6 +113,11 @@ export type Contact = {
   isCustomer: boolean
   isSupplier: boolean
   defaultEwtCodeId: string | null
+  paymentTermsDays: number | null
+  /** Centavos; null means no limit. */
+  creditLimit: number | null
+  /** The price list their prices come from (Phase 8); null: the items' own prices. */
+  priceListId: string | null
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -208,6 +218,12 @@ export const DocumentLineInput = z.object({
   accountId: z.uuid('Choose an account.'),
   /** Bills only: the withholding code for this line, if tax is withheld. */
   ewtCodeId: z.uuid().nullish(),
+  /** The item sold or bought (Phase 3). A stock item on an invoice leaves the invoice's warehouse. */
+  itemId: z.uuid().nullish(),
+  /** Bills made from a purchase order: the PO line this pays for. */
+  poLineId: z.uuid().nullish(),
+  /** Invoices made from a sales order (Phase 4): the order line this bills. Its stock left on the delivery. */
+  soLineId: z.uuid().nullish(),
 })
 export type DocumentLineInput = z.input<typeof DocumentLineInput>
 
@@ -215,6 +231,10 @@ const notes = optionalText(1000)
 
 export const InvoiceInput = z.object({
   customerId: z.uuid('Choose a customer.'),
+  /** Phase 7: the project it bills, for job costing. */
+  projectId: z.uuid().nullish(),
+  /** Where stock items on the invoice leave from. Needed when any line is a stock item. */
+  warehouseId: z.uuid().nullish(),
   date: dateSchema,
   dueDate: dateSchema.nullish(),
   pricesIncludeVat: z.boolean().default(false),
@@ -225,6 +245,8 @@ export type InvoiceInput = z.input<typeof InvoiceInput>
 
 export const BillInput = z.object({
   supplierId: z.uuid('Choose a supplier.'),
+  /** Phase 7: the project it's a cost of, for job costing. */
+  projectId: z.uuid().nullish(),
   /** The supplier's own invoice number, as printed on what they sent. */
   supplierInvoiceNo: optionalText(60),
   date: dateSchema,
@@ -249,6 +271,9 @@ export type DocumentLine = {
   ewtCodeId: string | null
   ewtRateBp: number | null
   atc: string | null
+  itemId: string | null
+  poLineId: string | null
+  soLineId: string | null
 } & LineAmounts
 
 type DocumentBase = DocumentTotals & {
@@ -264,9 +289,10 @@ type DocumentBase = DocumentTotals & {
   balance: number
   postedAt: string | null
   journalEntryId: string | null
+  projectId: string | null
 }
 
-export type InvoiceSummary = DocumentBase & { customer: { id: string; name: string } }
+export type InvoiceSummary = DocumentBase & { customer: { id: string; name: string }; warehouseId: string | null }
 export type Invoice = InvoiceSummary & { customer: Contact; lines: DocumentLine[]; payments: Payment[] }
 
 export type BillSummary = DocumentBase & { supplierInvoiceNo: string | null; supplier: { id: string; name: string } }
@@ -327,7 +353,7 @@ export type JournalInput = z.input<typeof JournalInput>
 
 export const ReverseInput = z.object({ date: dateSchema })
 
-export const JOURNAL_SOURCES = ['manual', 'sales_invoice', 'bill', 'payment_received', 'payment_made', 'reversal'] as const
+export const JOURNAL_SOURCES = ['manual', 'sales_invoice', 'bill', 'payment_received', 'payment_made', 'reversal', 'stock_adjustment', 'goods_receipt', 'delivery', 'payroll', 'payroll_payment', 'production', 'project'] as const
 export type JournalSource = (typeof JOURNAL_SOURCES)[number]
 export const JOURNAL_SOURCE_LABELS: Record<JournalSource, string> = {
   manual: 'Journal entry',
@@ -336,6 +362,13 @@ export const JOURNAL_SOURCE_LABELS: Record<JournalSource, string> = {
   payment_received: 'Payment received',
   payment_made: 'Payment made',
   reversal: 'Reversal',
+  stock_adjustment: 'Stock adjustment',
+  goods_receipt: 'Goods received',
+  delivery: 'Delivery',
+  payroll: 'Payroll',
+  payroll_payment: 'Payroll paid',
+  production: 'Production',
+  project: 'Project',
 }
 
 export type JournalLine = {
